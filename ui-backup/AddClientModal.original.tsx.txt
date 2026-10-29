@@ -1,0 +1,857 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { X, Search, AlertCircle, ChevronDown, ChevronUp, Check, Save } from 'lucide-react';
+import RequirementTypeField from '@/components/clients/RequirementTypeField';
+import { cleanAmountInput, formatAmountInput } from '@/lib/quotation';
+import { DEFAULT_INDUSTRY_SEGMENTS } from '@/lib/industries';
+import { ENQUIRY_STAGES, stageLabel } from '@/lib/utils';
+import { suggestClientCode, normalizeClientCode, clientCodeError } from '@/lib/clientCode';
+
+interface AddClientModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+  currentUserRole: 'DIRECTOR' | 'SALESPERSON';
+  currentUserId: string;
+}
+
+export default function AddClientModal({
+  isOpen,
+  onClose,
+  onSuccess,
+  currentUserRole,
+  currentUserId,
+}: AddClientModalProps) {
+  const [salespeople, setSalespeople] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<any[] | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Form Fields
+  // Section A: Client Details
+  const [clientName, setClientName] = useState('');
+  const [industrySegment, setIndustrySegment] = useState('Pharmaceutical');
+  const [contactPerson, setContactPerson] = useState('');
+  const [location, setLocation] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [emailAddress, setEmailAddress] = useState('');
+
+  // Section B: Requirement and Discussion
+  const [clientRequirement, setClientRequirement] = useState('');
+  const [requirementCategories, setRequirementCategories] = useState<string[]>(['PLANT']);
+  const [requirementCategoryOther, setRequirementCategoryOther] = useState('');
+  const [requirementValue, setRequirementValue] = useState('');
+  const [requirementDetails, setRequirementDetails] = useState('');
+  const [stageOfLead, setStageOfLead] = useState('NEW');
+  const [typeOfActivity, setTypeOfActivity] = useState('CALL');
+  const [callOutcome, setCallOutcome] = useState('Connected - Discussion Held');
+  const [meetingType, setMeetingType] = useState('INTRODUCTORY');
+  const [keyDiscussionPoints, setKeyDiscussionPoints] = useState('');
+  const [remarks, setRemarks] = useState('');
+
+  // Section C: Next Follow-up
+  const [nextAction, setNextAction] = useState('');
+  const [nextActionDate, setNextActionDate] = useState('');
+
+  // Auto-filled & Visible
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [entryDate, setEntryDate] = useState(todayStr);
+  const [assignedSalespersonId, setAssignedSalespersonId] = useState(currentUserId);
+
+  // Collapsed Details
+  const [clientType, setClientType] = useState('End User');
+  const [contactDesignation, setContactDesignation] = useState('');
+  const [leadSource, setLeadSource] = useState('Direct Inbound');
+  const [referredBy, setReferredBy] = useState('');
+  const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [siteAddress, setSiteAddress] = useState('');
+  const [state, setState] = useState('Maharashtra');
+  const [gstin, setGstin] = useState('');
+
+  // Existing Client search & auto-fill
+  const [existingClients, setExistingClients] = useState<any[]>([]);
+  const [selectedExistingId, setSelectedExistingId] = useState<string | null>(null);
+
+  // Client code for requirement numbers (NGPL -> NGPL/001); suggested from the name until edited
+  const [clientCode, setClientCode] = useState('');
+  const [codeEdited, setCodeEdited] = useState(false);
+  const [codeProblem, setCodeProblem] = useState<{ error: string; suggestion?: string } | null>(null);
+
+  useEffect(() => {
+    if (!codeEdited) setClientCode(suggestClientCode(clientName));
+  }, [clientName, codeEdited]);
+
+  useEffect(() => {
+    if (selectedExistingId || !clientCode) {
+      setCodeProblem(null);
+      return;
+    }
+    const formatError = clientCodeError(clientCode);
+    if (formatError) {
+      setCodeProblem({ error: formatError });
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/clients/code-check?code=${encodeURIComponent(clientCode)}`);
+        const data = await res.json();
+        setCodeProblem(data.error ? { error: data.error, suggestion: data.suggestion } : null);
+      } catch {}
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [clientCode, selectedExistingId]);
+
+  // Industry dropdown (defaults + custom segments already used by clients)
+  const [industryOptions, setIndustryOptions] = useState<string[]>(DEFAULT_INDUSTRY_SEGMENTS);
+  const [customIndustry, setCustomIndustry] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch('/api/clients/industries')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.industries) setIndustryOptions(data.industries);
+      })
+      .catch(() => {});
+  }, [isOpen]);
+
+  function addCustomIndustry() {
+    const name = customIndustry.trim();
+    if (!name) return;
+    const existing = industryOptions.find((s) => s.toLowerCase() === name.toLowerCase());
+    if (!existing) {
+      setIndustryOptions((prev) => [...prev, name]);
+    }
+    setIndustrySegment(existing || name);
+    setCustomIndustry('');
+  }
+
+  useEffect(() => {
+    if (currentUserRole === 'DIRECTOR') {
+      fetch('/api/settings/users')
+        .then((res) => res.json())
+        .then((data) => {
+          const sps = (data.users || []).filter((u: any) => u.role === 'SALESPERSON' && u.isActive);
+          setSalespeople(sps);
+          if (sps.length > 0 && !assignedSalespersonId) {
+            setAssignedSalespersonId(sps[0].id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentUserRole, assignedSalespersonId]);
+
+  // Duplicate Search as user types client name
+  useEffect(() => {
+    if (clientName.trim().length >= 3 && !selectedExistingId) {
+      const timer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/clients?search=${encodeURIComponent(clientName.trim())}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.clients && data.clients.length > 0) {
+              setDuplicateWarning(data.clients);
+            } else {
+              setDuplicateWarning(null);
+            }
+          }
+        } catch {}
+      }, 400);
+      return () => clearTimeout(timer);
+    } else {
+      setDuplicateWarning(null);
+    }
+  }, [clientName, selectedExistingId]);
+
+  function selectExistingClient(client: any) {
+    setSelectedExistingId(client.id);
+    setClientName(client.name);
+    setIndustrySegment(client.industrySegment);
+    if (client.industrySegment && client.industrySegment !== 'Other' && !industryOptions.includes(client.industrySegment)) {
+      setIndustryOptions((prev) => [...prev, client.industrySegment]);
+    }
+    setLocation(client.city || '');
+    if (client.contacts && client.contacts.length > 0) {
+      setContactPerson(client.contacts[0].name);
+      setMobileNumber(client.contacts[0].mobile);
+      setEmailAddress(client.contacts[0].email || '');
+    }
+    setDuplicateWarning(null);
+  }
+
+  async function handleSubmit(saveMode: 'WITH_FOLLOWUP' | 'CLIENT_ONLY') {
+    setError(null);
+    setLoading(true);
+
+    try {
+      if (!clientName.trim()) {
+        throw new Error('Client / Company Name is required');
+      }
+
+      if (!selectedExistingId) {
+        const codeError = clientCodeError(clientCode);
+        if (codeError) throw new Error(codeError);
+        if (codeProblem) throw new Error(codeProblem.error);
+      }
+
+      // A new client always comes with its first requirement
+      if (!selectedExistingId && !clientRequirement.trim()) {
+        throw new Error('Enter the requirement: what does this client need?');
+      }
+      if (clientRequirement.trim() && requirementCategories.length === 0) {
+        throw new Error('Tick at least one requirement type');
+      }
+      if (clientRequirement.trim() && requirementCategories.includes('OTHER') && !requirementCategoryOther.trim()) {
+        throw new Error('Type in what the "Other" requirement is');
+      }
+
+      if (saveMode === 'WITH_FOLLOWUP' && nextAction && !nextActionDate) {
+        throw new Error('A deadline date and time is required when creating a next action');
+      }
+
+      const payload = {
+        clientName,
+        // Typed-but-not-added custom segment still counts
+        industrySegment: industrySegment === 'Other' && customIndustry.trim() ? customIndustry.trim() : industrySegment,
+        contactPerson,
+        location,
+        mobileNumber,
+        emailAddress,
+        clientRequirement,
+        requirementCategories,
+        requirementCategoryOther,
+        requirementValue: parseFloat(requirementValue) || 0,
+        requirementDetails,
+        stageOfLead,
+        typeOfActivity: saveMode === 'WITH_FOLLOWUP' ? typeOfActivity : undefined,
+        callOutcome: saveMode === 'WITH_FOLLOWUP' ? callOutcome : undefined,
+        meetingType: saveMode === 'WITH_FOLLOWUP' ? meetingType : undefined,
+        keyDiscussionPoints: saveMode === 'WITH_FOLLOWUP' ? keyDiscussionPoints : undefined,
+        remarks,
+        nextAction: saveMode === 'WITH_FOLLOWUP' ? nextAction : undefined,
+        nextActionDate: saveMode === 'WITH_FOLLOWUP' && nextActionDate ? new Date(nextActionDate).toISOString() : undefined,
+        entryDate,
+        assignedSalespersonId: currentUserRole === 'DIRECTOR' ? assignedSalespersonId : currentUserId,
+        clientType,
+        contactDesignation,
+        leadSource,
+        referredBy,
+        whatsappNumber,
+        siteAddress,
+        state,
+        gstin,
+        existingClientId: selectedExistingId,
+        clientCode: selectedExistingId ? undefined : clientCode,
+        saveMode,
+      };
+
+      const res = await fetch('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.suggestion) setCodeProblem({ error: data.error, suggestion: data.suggestion });
+        throw new Error(data.error || 'Failed to save client');
+      }
+
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 md:p-6 overflow-y-auto">
+      <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden my-auto">
+        {/* Modal Header */}
+        <div className="bg-navy-900 text-white px-6 py-4 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-base tracking-wide">Add Client</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-navy-800 transition"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-center space-x-2 text-rose-700 text-xs">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="p-6 max-h-[75vh] overflow-y-auto space-y-6">
+          {/* Metadata Row: Entry Date & Sales Executive */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Date
+              </label>
+              <input
+                type="date"
+                value={entryDate}
+                onChange={(e) => setEntryDate(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+              />
+            </div>
+
+            {currentUserRole === 'DIRECTOR' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Salesperson
+              </label>
+                <select
+                  value={assignedSalespersonId}
+                  onChange={(e) => setAssignedSalespersonId(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                >
+                  {salespeople.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </option>
+                  ))}
+                </select>
+            </div>
+            )}
+          </div>
+
+          {/* Section A: Client Details */}
+          <div>
+            <div className="border-b border-slate-200 pb-2 mb-3 flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-navy-900">
+                Client
+              </h4>
+              {selectedExistingId && (
+                <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-semibold">
+                  Existing client
+                </span>
+              )}
+            </div>
+
+            {selectedExistingId ? (
+              /* Existing client: details are already on file */
+              <div className="p-3 rounded-xl bg-emerald-50/60 border border-emerald-200 flex items-start justify-between text-xs">
+                <div>
+                  <p className="font-bold text-slate-900">{clientName}</p>
+                  <p className="text-slate-600 mt-0.5">
+                    {[industrySegment, contactPerson, mobileNumber, location].filter(Boolean).join(' · ')}
+                  </p>
+                  <p className="text-slate-500 mt-1">Just fill in the new requirement and follow-up below.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedExistingId(null)}
+                  className="text-sky-700 hover:text-sky-900 font-semibold shrink-0 ml-3"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2 relative">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Company Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Cipla Laboratories Ltd"
+                  value={clientName}
+                  onChange={(e) => {
+                    setClientName(e.target.value);
+                    if (selectedExistingId) setSelectedExistingId(null);
+                  }}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+
+                {/* Duplicate Warning Box */}
+                {duplicateWarning && duplicateWarning.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-amber-50 border border-amber-300 rounded-xl p-3 shadow-lg z-30 text-xs">
+                    <p className="font-bold text-amber-800 flex items-center space-x-1.5">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Possible existing duplicate client(s) found:</span>
+                    </p>
+                    <div className="mt-2 space-y-1.5">
+                      {duplicateWarning.map((c) => (
+                        <div
+                          key={c.id}
+                          className="flex items-center justify-between bg-white p-2 rounded-lg border border-amber-200 hover:border-sky-400 cursor-pointer"
+                          onClick={() => selectExistingClient(c)}
+                        >
+                          <div>
+                            <span className="font-semibold text-slate-800">{c.name}</span>
+                            <span className="text-slate-500 ml-2">({c.city || 'No City'})</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="bg-sky-50 text-sky-700 font-semibold text-[11px] px-2 py-0.5 rounded hover:bg-sky-100"
+                          >
+                            Use Existing
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Client Code *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. NGPL"
+                  value={clientCode}
+                  onChange={(e) => {
+                    setCodeEdited(true);
+                    setClientCode(normalizeClientCode(e.target.value).slice(0, 10));
+                  }}
+                  className={`w-full border rounded-lg px-3 py-2 text-xs font-semibold tracking-wider focus:ring-2 focus:ring-sky-500 focus:outline-none ${
+                    codeProblem ? 'border-rose-400' : 'border-slate-300'
+                  }`}
+                />
+                {codeProblem ? (
+                  <p className="text-[11px] text-rose-600 mt-1">
+                    {codeProblem.error}{' '}
+                    {codeProblem.suggestion && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodeEdited(true);
+                          setClientCode(codeProblem.suggestion!);
+                        }}
+                        className="font-semibold text-sky-700 underline"
+                      >
+                        Use {codeProblem.suggestion}
+                      </button>
+                    )}
+                  </p>
+                ) : (
+                  clientCode && (
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Requirements will be numbered {clientCode}/001, {clientCode}/002...
+                    </p>
+                  )
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Industry *
+                </label>
+                <select
+                  value={industrySegment}
+                  onChange={(e) => setIndustrySegment(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                >
+                  {industryOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                  <option value="Other">Other</option>
+                </select>
+                {industrySegment === 'Other' && (
+                  <div className="flex items-center space-x-2 mt-2">
+                    <input
+                      type="text"
+                      placeholder="Enter new industry segment"
+                      value={customIndustry}
+                      onChange={(e) => setCustomIndustry(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addCustomIndustry();
+                        }
+                      }}
+                      className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomIndustry}
+                      disabled={!customIndustry.trim()}
+                      className="bg-sky-600 text-white font-semibold text-xs px-3 py-2 rounded-lg hover:bg-sky-700 disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Contact Person *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Dr. Vivek Joshi"
+                  value={contactPerson}
+                  onChange={(e) => setContactPerson(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  City *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Pithampur"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Mobile *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. +91 98930 11223"
+                  value={mobileNumber}
+                  onChange={(e) => setMobileNumber(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  placeholder="e.g. v.joshi@cipla.com"
+                  value={emailAddress}
+                  onChange={(e) => setEmailAddress(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            )}
+          </div>
+
+          {/* Section B: New Requirement (a new client comes with its first requirement) */}
+          <div>
+            <div className="border-b border-slate-200 pb-2 mb-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-navy-900">
+                New Requirement
+              </h4>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  What do they need? {!selectedExistingId && '*'}
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 25 m3/hr Demineralization & UF System"
+                  value={clientRequirement}
+                  onChange={(e) => setClientRequirement(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  required={!selectedExistingId}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Type (tick all that apply)</label>
+                <RequirementTypeField
+                  categories={requirementCategories}
+                  categoryOther={requirementCategoryOther}
+                  onCategoriesChange={setRequirementCategories}
+                  onCategoryOtherChange={setRequirementCategoryOther}
+                  inputClassName="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Approx. Value (₹)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={formatAmountInput(requirementValue)}
+                    onChange={(e) => setRequirementValue(cleanAmountInput(e.target.value))}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Stage
+                  </label>
+                  <select
+                    value={stageOfLead}
+                    onChange={(e) => setStageOfLead(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  >
+                    {ENQUIRY_STAGES.map((s) => (
+                      <option key={s} value={s}>
+                        {stageLabel(s)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Details (optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="Capacity, raw water quality, scope..."
+                  value={requirementDetails}
+                  onChange={(e) => setRequirementDetails(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Discussion */}
+          <div>
+            <div className="border-b border-slate-200 pb-2 mb-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-navy-900">
+                Discussion
+              </h4>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Activity
+                  </label>
+                  <select
+                    value={typeOfActivity}
+                    onChange={(e) => setTypeOfActivity(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  >
+                    <option value="CALL">Call</option>
+                    <option value="WHATSAPP">WhatsApp</option>
+                    <option value="EMAIL">Email</option>
+                    <option value="MEETING">Meeting</option>
+                    <option value="SITE_VISIT">Site Visit</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Outcome
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Commercial negotiation held"
+                    value={callOutcome}
+                    onChange={(e) => setCallOutcome(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Discussion Type
+                  </label>
+                  <select
+                    value={meetingType}
+                    onChange={(e) => setMeetingType(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  >
+                    <option value="INTRODUCTORY">Introductory</option>
+                    <option value="TECHNICAL">Technical</option>
+                    <option value="COMMERCIAL">Commercial</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  What was discussed
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Summary of discussion, raw water specs, delivery expectations..."
+                  value={keyDiscussionPoints}
+                  onChange={(e) => setKeyDiscussionPoints(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Remarks
+                </label>
+                <input
+                  type="text"
+                  placeholder="Special instructions, competitor details, urgency..."
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section C: Next Follow-up */}
+          <div className="bg-sky-50/60 p-4 rounded-xl border border-sky-100">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-sky-900 mb-3">
+              Next Follow-up
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Next Action
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Submit revised proposal with PLC automation option"
+                  value={nextAction}
+                  onChange={(e) => setNextAction(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Due Date & Time
+                </label>
+                <input
+                  type="datetime-local"
+                  value={nextActionDate}
+                  onChange={(e) => setNextActionDate(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Collapsible Additional Details */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="w-full px-4 py-2.5 bg-slate-50 flex items-center justify-between text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+            >
+              <span>More details (optional)</span>
+              {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+
+            {showAdvanced && (
+              <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-slate-200">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Client Type</label>
+                  <select
+                    value={clientType}
+                    onChange={(e) => setClientType(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs"
+                  >
+                    <option value="End User">End User</option>
+                    <option value="OEM / EPC Contractor">OEM / EPC Contractor</option>
+                    <option value="Consultant">Consultant</option>
+                    <option value="Trader">Trader</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Contact Designation</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Plant Head"
+                    value={contactDesignation}
+                    onChange={(e) => setContactDesignation(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">GSTIN Number</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 27AABCT8899K1Z5"
+                    value={gstin}
+                    onChange={(e) => setGstin(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs uppercase"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">Site Address</label>
+                  <input
+                    type="text"
+                    placeholder="Plot / MIDC Area..."
+                    value={siteAddress}
+                    onChange={(e) => setSiteAddress(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">State</label>
+                  <input
+                    type="text"
+                    value={state}
+                    onChange={(e) => setState(e.target.value)}
+                    className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Modal Actions */}
+        <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full md:w-auto px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
+          >
+            Cancel
+          </button>
+
+          <div className="w-full md:w-auto flex items-center space-x-3">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleSubmit('CLIENT_ONLY')}
+              className="flex-1 md:flex-none border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold px-4 py-2 rounded-xl transition"
+            >
+              Save Client
+            </button>
+
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleSubmit('WITH_FOLLOWUP')}
+              className="flex-1 md:flex-none bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-5 py-2 rounded-xl shadow-sm transition flex items-center justify-center space-x-1.5"
+            >
+              {loading ? (
+                <span>Saving...</span>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  <span>Save with Follow-up</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

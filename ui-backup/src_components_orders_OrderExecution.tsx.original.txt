@@ -1,0 +1,421 @@
+'use client';
+
+import React, { useState } from 'react';
+import { CheckCircle2, Circle, MinusCircle } from 'lucide-react';
+import { formatDate, formatINR, humanize } from '@/lib/utils';
+import { requirementTypeLabel } from '@/lib/requirementTypes';
+import { DELIVERY_STEP, invoiceGstStageId, stageTriggerStep } from '@/lib/executionSteps';
+import { invoiceGstAmount, receivedTotal } from '@/lib/deductions';
+
+interface OrderExecutionProps {
+  order: any; // with executionSteps, payments, receipts and enquiry included
+  onChanged: () => void;
+}
+
+const today = () => new Date().toISOString().split('T')[0];
+
+/**
+ * An order's execution steps, from receiving the client's PO through dispatch to commissioning.
+ * Each is ticked off with a date, or marked not needed for this order. Finishing a step raises the
+ * payment stages tied to it as due, and the invoice (with GST) is raised at one step of the order.
+ */
+export default function OrderExecution({ order, onChanged }: OrderExecutionProps) {
+  const steps: any[] = order.executionSteps || [];
+  const settled = steps.filter((s) => s.status !== 'PENDING').length;
+  const overdue =
+    order.deliveryDate &&
+    order.orderStatus !== 'COMPLETED' &&
+    !steps.some((s) => s.name === DELIVERY_STEP && s.status !== 'PENDING') &&
+    new Date(order.deliveryDate).getTime() < Date.now();
+
+  return (
+    <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-3">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-bold text-slate-900 text-sm">
+            {order.orderNumber}
+            <span className="font-normal text-slate-500"> · PO {order.clientPoNumber}</span>
+          </p>
+          {order.enquiry && (
+            <p className="text-slate-500">
+              {order.enquiry.enquiryNumber} - {order.enquiry.title} ({requirementTypeLabel(order.enquiry)})
+            </p>
+          )}
+        </div>
+        <div className="md:text-right shrink-0">
+          <span
+            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+              order.orderStatus === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'
+            }`}
+          >
+            {humanize(order.orderStatus)}
+          </span>
+          {order.deliveryDate && (
+            <p className={`mt-1 ${overdue ? 'text-rose-700 font-semibold' : 'text-slate-500'}`}>
+              {overdue ? 'Delivery overdue · was due ' : 'Expected delivery '}
+              {formatDate(order.deliveryDate)}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+        <div className="h-full bg-sky-500" style={{ width: `${steps.length ? (settled / steps.length) * 100 : 0}%` }} />
+      </div>
+
+      <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
+        <div className="flex px-3 py-2 bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <span className="flex-1">Step</span>
+          <span className="w-16 text-center">Invoice</span>
+        </div>
+        <div className="divide-y divide-slate-200">
+          {steps.map((s) => (
+            <StepRow key={s.id} order={order} step={s} onChanged={onChanged} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+async function send(url: string, method: string, body?: any) {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not save');
+  return data;
+}
+
+// What a payment stage still expects, not counting any invoice GST on it
+function stageLeft(order: any, stage: any) {
+  const got = receivedTotal((order.receipts || []).filter((r: any) => r.paymentStageId === stage.id));
+  return Math.max(Math.round((Number(stage.expectedAmount) - got) * 100) / 100, 0);
+}
+
+function StepRow({ order, step, onChanged }: { order: any; step: any; onChanged: () => void }) {
+  const orderId = order.id;
+  // Payment stages this step raises as due
+  const raises: any[] = (order.payments || []).filter((p: any) => stageTriggerStep(p.description) === step.name);
+  const hasInvoice = order.invoiceStepId === step.id;
+  const invoiceElsewhere = !!order.invoiceStepId && !hasInvoice;
+  const [invoicing, setInvoicing] = useState(false);
+  const [removingInvoice, setRemovingInvoice] = useState(false);
+  // Editing: ticking a pending step, or changing the date of a done one
+  const [editing, setEditing] = useState(false);
+  const [date, setDate] = useState(step.completedDate ? step.completedDate.slice(0, 10) : today());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(status: 'DONE' | 'NOT_APPLICABLE' | 'PENDING') {
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/orders/${orderId}/execution/${step.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, completedDate: status === 'DONE' ? date : undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save');
+      setEditing(false);
+      onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setSaving(false);
+  }
+
+  const done = step.status === 'DONE';
+  const notNeeded = step.status === 'NOT_APPLICABLE';
+
+  return (
+    <div className="p-3 space-y-2">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={done || editing}
+            disabled={saving || notNeeded}
+            onChange={(e) => {
+              if (e.target.checked) {
+                setDate(today());
+                setEditing(true);
+              } else if (done) {
+                save('PENDING');
+              } else {
+                setEditing(false);
+              }
+            }}
+            className="h-4 w-4 accent-sky-600"
+          />
+          {done ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+          ) : notNeeded ? (
+            <MinusCircle className="h-4 w-4 text-slate-300 shrink-0" />
+          ) : (
+            <Circle className="h-4 w-4 text-slate-300 shrink-0" />
+          )}
+          <span className={notNeeded ? 'text-slate-400 line-through' : 'font-semibold text-slate-800'}>{step.name}</span>
+        </label>
+
+        <div className="pl-12 sm:pl-0 flex items-center gap-3 sm:justify-end">
+          {done && !editing && (
+            <span className="text-emerald-700">
+              Done on <strong>{formatDate(step.completedDate)}</strong>
+              <button onClick={() => setEditing(true)} className="ml-2 text-sky-700 hover:text-sky-900 font-semibold">
+                Change date
+              </button>
+            </span>
+          )}
+          {notNeeded && (
+            <button onClick={() => save('PENDING')} disabled={saving} className="text-sky-700 hover:text-sky-900 font-semibold">
+              Needed after all
+            </button>
+          )}
+          {step.status === 'PENDING' && !editing && (
+            <button onClick={() => save('NOT_APPLICABLE')} disabled={saving} className="text-slate-400 hover:text-slate-700 font-semibold">
+              Not needed
+            </button>
+          )}
+        </div>
+        <label
+          className={`pl-12 sm:pl-0 sm:w-16 flex items-center sm:justify-center gap-1.5 ${invoiceElsewhere ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          title={invoiceElsewhere ? 'The invoice is already raised at another step' : 'Raise the invoice at this step'}
+        >
+          <input
+            type="checkbox"
+            checked={(hasInvoice && !removingInvoice) || invoicing}
+            disabled={invoiceElsewhere || saving}
+            onChange={(e) => {
+              // Unticking a raised invoice asks before removing it
+              if (hasInvoice) setRemovingInvoice(!e.target.checked);
+              else setInvoicing(e.target.checked);
+            }}
+            className="h-4 w-4 accent-violet-600 disabled:opacity-40"
+          />
+          <span className="sm:hidden text-slate-600 font-semibold">Invoice</span>
+        </label>
+      </div>
+
+      {/* Payments this step raises */}
+      {raises.map((p) => (
+        <p key={p.id} className="pl-12 text-[11px]">
+          {p.dueDate ? (
+            <span className="text-emerald-700 font-semibold">
+              {Number(p.percent)}% {p.description} payment due since {formatDate(p.dueDate)}
+              {stageLeft(order, p) > 0 ? ` · ${formatINR(stageLeft(order, p))} to receive` : ' · received'}
+            </span>
+          ) : (
+            <span className="text-slate-400">When done: {Number(p.percent)}% {p.description} payment becomes due</span>
+          )}
+        </p>
+      ))}
+
+      {hasInvoice && !invoicing && (
+        <InvoiceSummary
+          order={order}
+          step={step}
+          removing={removingInvoice}
+          setRemoving={setRemovingInvoice}
+          onEdit={() => setInvoicing(true)}
+          onChanged={onChanged}
+        />
+      )}
+      {invoicing && <InvoiceForm order={order} step={step} onDone={() => setInvoicing(false)} onChanged={onChanged} />}
+
+      {editing && (
+        <div className="pl-12 flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-slate-700">Done on</span>
+          <input
+            type="date"
+            value={date}
+            max={today()}
+            onChange={(e) => setDate(e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1"
+          />
+          <button
+            onClick={() => save('DONE')}
+            disabled={saving || !date}
+            className="bg-sky-600 hover:bg-sky-700 text-white font-semibold px-3 py-1 rounded-lg disabled:opacity-60"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          <button onClick={() => setEditing(false)} className="text-slate-500 hover:text-slate-800 font-semibold">
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {step.updatedBy?.name && !editing && step.status !== 'PENDING' && (
+        <p className="pl-12 text-[11px] text-slate-400">marked by {step.updatedBy.name}</p>
+      )}
+      {error && <p className="pl-12 font-semibold text-rose-700">{error}</p>}
+    </div>
+  );
+}
+
+// The invoice raised at a step: the GST and what to ask the client for
+function InvoiceSummary({
+  order,
+  step,
+  removing,
+  setRemoving,
+  onEdit,
+  onChanged,
+}: {
+  order: any;
+  step: any;
+  removing: boolean;
+  setRemoving: (v: boolean) => void;
+  onEdit: () => void;
+  onChanged: () => void;
+}) {
+  const stage = (order.payments || []).find((p: any) => Number(p.gstAmount) > 0) ||
+    (order.payments || []).find((p: any) => p.id === invoiceGstStageId(order.payments || [], step.name));
+  const gst = Number(order.invoiceGstAmount);
+  const left = stage ? stageLeft(order, stage) : 0;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setError(null);
+    setSaving(true);
+    try {
+      await send(`/api/orders/${order.id}/invoice`, 'DELETE');
+      setRemoving(false);
+      onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="ml-12 p-2.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-900 space-y-1">
+      <p>
+        <strong>Invoice raised</strong> on {formatDate(order.invoiceDate)} · GST {Number(order.invoiceGstPercent)}%{' '}
+        {gst > 0 ? <strong>{formatINR(gst)}</strong> : '(already in the order value)'}
+      </p>
+      {stage && (
+        <p>
+          Ask the client for {formatINR(left)} ({Number(stage.percent)}% {stage.description}
+          {left === 0 ? ', already received' : ''}) + GST {formatINR(gst)} = <strong>{formatINR(left + gst)}</strong>
+        </p>
+      )}
+      {error && <p className="font-semibold text-rose-700">{error}</p>}
+      {removing ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="font-semibold">Remove this invoice? Its GST will no longer be asked for.</span>
+          <button onClick={() => setRemoving(false)} className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold text-slate-700">
+            Keep it
+          </button>
+          <button
+            onClick={remove}
+            disabled={saving}
+            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold disabled:opacity-60"
+          >
+            {saving ? 'Removing...' : 'Yes, remove'}
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-3 pt-0.5">
+          <button onClick={onEdit} className="text-sky-700 hover:text-sky-900 font-semibold">Change</button>
+          <button onClick={() => setRemoving(true)} className="text-slate-500 hover:text-rose-600 font-semibold">Remove invoice</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Raise (or change) the invoice at a step: GST % and date, with what to ask the client for
+function InvoiceForm({ order, step, onDone, onChanged }: { order: any; step: any; onDone: () => void; onChanged: () => void }) {
+  const gstIncluded = Number(order.taxValue) > 0;
+  const [percent, setPercent] = useState(order.invoiceGstPercent ? String(Number(order.invoiceGstPercent)) : '18');
+  const [date, setDate] = useState(
+    order.invoiceDate ? order.invoiceDate.slice(0, 10) : step.completedDate ? step.completedDate.slice(0, 10) : today()
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const stage = (order.payments || []).find((p: any) => p.id === invoiceGstStageId(order.payments || [], step.name));
+  const gst = invoiceGstAmount(order, parseFloat(percent) || 0);
+  const left = stage ? stageLeft(order, stage) : 0;
+
+  async function save() {
+    setError(null);
+    setSaving(true);
+    try {
+      await send(`/api/orders/${order.id}/invoice`, 'PUT', { stepId: step.id, gstPercent: percent, invoiceDate: date });
+      onDone();
+      onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    }
+    setSaving(false);
+  }
+
+  return (
+    <div className="ml-12 p-3 rounded-lg border border-violet-200 bg-violet-50/60 space-y-2">
+      <p className="font-bold text-slate-800">Raise invoice at {step.name}</p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="block font-semibold text-slate-700 mb-1">GST</span>
+          {gstIncluded ? (
+            <span className="text-slate-600">Already in the order value ({formatINR(order.taxValue)})</span>
+          ) : (
+            <span className="flex items-stretch">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={percent}
+                onChange={(e) => setPercent(e.target.value.replace(/[^\d.]/g, '').slice(0, 5))}
+                className="w-16 border border-slate-300 rounded-l-lg px-2 py-1 text-right bg-white"
+                autoFocus
+              />
+              <span className="px-2 py-1 rounded-r-lg bg-slate-100 border border-l-0 border-slate-300 font-semibold text-slate-600">%</span>
+            </span>
+          )}
+        </label>
+        <label className="block">
+          <span className="block font-semibold text-slate-700 mb-1">Invoice date</span>
+          <input
+            type="date"
+            value={date}
+            max={today()}
+            onChange={(e) => setDate(e.target.value)}
+            className="border border-slate-300 rounded-lg px-2 py-1 bg-white"
+          />
+        </label>
+      </div>
+      <div className="p-2 rounded bg-white border border-slate-200 space-y-0.5">
+        {!gstIncluded && (
+          <p className="text-slate-600">
+            GST {parseFloat(percent) || 0}% on {formatINR(order.netValue)} = <strong>{formatINR(gst)}</strong>
+          </p>
+        )}
+        {stage && (
+          <p className="text-slate-800">
+            Ask the client for {formatINR(left)} due ({Number(stage.percent)}% {stage.description}) + GST {formatINR(gst)} ={' '}
+            <strong className="text-violet-800">{formatINR(left + gst)}</strong>
+          </p>
+        )}
+        <p className="text-[11px] text-slate-500">Only one step can have the invoice; the other Invoice boxes are blocked once it is raised.</p>
+      </div>
+      {error && <p className="font-semibold text-rose-700">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button onClick={onDone} className="px-3 py-1 font-semibold text-slate-600 hover:text-slate-800">Cancel</button>
+        <button
+          onClick={save}
+          disabled={saving || !date}
+          className="bg-violet-600 hover:bg-violet-700 text-white font-semibold px-3 py-1 rounded-lg disabled:opacity-60"
+        >
+          {saving ? 'Saving...' : 'Raise invoice'}
+        </button>
+      </div>
+    </div>
+  );
+}

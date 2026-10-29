@@ -1,0 +1,78 @@
+import prisma from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
+import { calculateDeductions, DeductionBase, splitOverStages } from '@/lib/deductions';
+
+type Db = typeof prisma | Prisma.TransactionClient;
+
+type OrderForPayments = {
+  id: string;
+  netValue: any;
+  taxValue: any;
+  paymentStages: unknown;
+  tdsEnabled: boolean;
+  tdsPercent: any;
+  tdsBase: string;
+  retentionEnabled: boolean;
+  retentionPercent: any;
+  retentionBase: string;
+};
+
+function quotedStages(stages: unknown) {
+  return Array.isArray(stages)
+    ? stages.map((s: any) => ({ percent: Number(s.percent) || 0, description: String(s.description || '').trim() }))
+    : [];
+}
+
+/**
+ * Totals and per-stage amounts for an order from its value, GST, deduction settings and quoted stages.
+ * Orders quoted without stages get one full payment.
+ */
+export function orderPaymentPlan(order: Omit<OrderForPayments, 'id'>) {
+  const totals = calculateDeductions({
+    netValue: Number(order.netValue),
+    gstValue: Number(order.taxValue),
+    tdsEnabled: order.tdsEnabled,
+    tdsPercent: Number(order.tdsPercent),
+    retentionEnabled: order.retentionEnabled,
+    retentionPercent: Number(order.retentionPercent),
+    rules: { tdsBase: order.tdsBase as DeductionBase, retentionBase: order.retentionBase as DeductionBase },
+  });
+  return { totals, stages: splitOverStages(quotedStages(order.paymentStages), totals) };
+}
+
+/**
+ * Create the payments due for an order that has none yet.
+ */
+export async function createOrderPayments(db: Db, order: OrderForPayments) {
+  const { stages } = orderPaymentPlan(order);
+  await db.orderPaymentStage.createMany({ data: stages.map((r) => ({ ...r, orderId: order.id })) });
+}
+
+/**
+ * Recalculate an order's deductions and its stages' amounts in place, e.g. after its TDS or
+ * retention settings change. Stage rows keep their ids, so receipts stay attached to them.
+ */
+export async function recalculateOrderPayments(db: Db, orderId: string) {
+  const order = await db.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: { payments: { orderBy: { sequence: 'asc' } } },
+  });
+  const { totals, stages } = orderPaymentPlan(order);
+
+  await db.order.update({
+    where: { id: orderId },
+    data: { tdsAmount: totals.tdsAmount, retentionAmount: totals.retentionAmount, expectedPayment: totals.expectedPayment },
+  });
+
+  for (const s of stages) {
+    const existing = order.payments.find((p) => p.sequence === s.sequence);
+    if (existing) {
+      await db.orderPaymentStage.update({
+        where: { id: existing.id },
+        data: { amount: s.amount, tdsAmount: s.tdsAmount, retentionAmount: s.retentionAmount, expectedAmount: s.expectedAmount },
+      });
+    } else {
+      await db.orderPaymentStage.create({ data: { ...s, orderId } });
+    }
+  }
+}

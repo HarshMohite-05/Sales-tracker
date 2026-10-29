@@ -1,0 +1,36 @@
+import { Prisma, TransportationTerms } from '@prisma/client';
+import { formatPaymentStages, parsePaymentStages, quotationValues } from '@/lib/quotation';
+
+/**
+ * Check the fields of the quotation form (create, revise and edit all send the same ones)
+ * and turn them into the columns stored on a quotation version.
+ */
+export function parseQuotationInput(body: any):
+  | { error: string }
+  | { values: ReturnType<typeof quotationValues>; terms: {
+      product: string;
+      paymentTerms: string | null;
+      paymentStages: any;
+      transportation: TransportationTerms;
+      remarks: string | null;
+    } } {
+  const { product, price, paymentStages, transportation, remarks } = body ?? {};
+
+  if (!product?.trim()) return { error: 'Product is required' };
+  const priceValue = parseFloat(price);
+  if (!(priceValue > 0)) return { error: 'Enter a price greater than zero' };
+  if (!(transportation in TransportationTerms)) return { error: 'Choose transportation: Extra at actual or Included' };
+  const parsedStages = parsePaymentStages(paymentStages);
+  if ('error' in parsedStages) return { error: parsedStages.error };
+
+  return {
+    values: quotationValues(product.trim(), priceValue),
+    terms: {
+      product: product.trim(),
+      paymentTerms: formatPaymentStages(parsedStages.stages) || null,
+      paymentStages: parsedStages.stages.length > 0 ? (parsedStages.stages as any[]) : Prisma.JsonNull,
+      transportation: transportation as TransportationTerms,
+      remarks: remarks?.trim() || null,
+    },
+  };
+}

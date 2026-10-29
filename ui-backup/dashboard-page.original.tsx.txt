@@ -1,0 +1,448 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import AppShell from '@/components/layout/AppShell';
+import {
+  Users,
+  CalendarCheck,
+  TrendingUp,
+  AlertCircle,
+  FileCheck,
+  Clock,
+  ArrowUpRight,
+  ShieldAlert,
+  ChevronRight,
+  IndianRupee,
+  Layers,
+  Filter,
+  CheckCircle2,
+  Hourglass,
+  Plus,
+  FileText,
+} from 'lucide-react';
+import { formatINR, formatINRCompact, formatDate, formatDateTime, getIndianFYQuarter, humanize } from '@/lib/utils';
+import { formatQuotationNumber } from '@/lib/quotation';
+import { DEFAULT_INDUSTRY_SEGMENTS } from '@/lib/industries';
+import Link from 'next/link';
+import DirectorQuoteApproveModal from '@/components/modals/DirectorQuoteApproveModal';
+
+export default function DashboardPage() {
+  const currentFY = getIndianFYQuarter();
+  const [financialYear, setFinancialYear] = useState(currentFY.financialYear);
+  const [quarter, setQuarter] = useState<string>(currentFY.quarter);
+  const [salespersonId, setSalespersonId] = useState('');
+  const [industry, setIndustry] = useState('');
+  const [category, setCategory] = useState('');
+  const [stage, setStage] = useState('');
+
+  const [salespeople, setSalespeople] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [industryOptions, setIndustryOptions] = useState<string[]>(DEFAULT_INDUSTRY_SEGMENTS);
+
+  // Modals
+  const [selectedQuoteForApproval, setSelectedQuoteForApproval] = useState<any>(null);
+
+  useEffect(() => {
+    fetch('/api/settings/users')
+      .then((res) => res.json())
+      .then((data) => {
+        setSalespeople((data.users || []).filter((u: any) => u.role === 'SALESPERSON'));
+      })
+      .catch(() => {});
+    fetch('/api/clients/industries')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.industries) setIndustryOptions(data.industries);
+      })
+      .catch(() => {});
+  }, []);
+
+  async function loadDashboard() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        financialYear,
+        quarter,
+        ...(salespersonId ? { salespersonId } : {}),
+        ...(industry ? { industry } : {}),
+        ...(category ? { category } : {}),
+        ...(stage ? { stage } : {}),
+      });
+
+      const res = await fetch(`/api/dashboard/stats?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadDashboard();
+    // Reload when a client is added from the sidebar
+    window.addEventListener('crm:data-changed', loadDashboard);
+    return () => window.removeEventListener('crm:data-changed', loadDashboard);
+  }, [financialYear, quarter, salespersonId, industry, category, stage]);
+
+  const isDirector = stats?.role === 'DIRECTOR';
+  const summary = stats?.summary || {};
+
+  return (
+    <AppShell>
+      <div className="space-y-6">
+        {/* Top Header & Context */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
+            <p className="text-xs text-slate-500 mt-1">
+              {isDirector ? 'Whole company' : 'Your work'}
+            </p>
+          </div>
+        </div>
+
+        {/* Global Filter Bar (Directors get full multi-dimensional filters) */}
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center gap-3 text-xs">
+          <Filter className="h-4 w-4 text-slate-400" />
+
+          <div>
+            <select
+              value={financialYear}
+              onChange={(e) => setFinancialYear(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-800"
+            >
+              <option value="FY 2026-27">FY 2026-27</option>
+              <option value="FY 2025-26">FY 2025-26</option>
+            </select>
+          </div>
+
+          <div>
+            <select
+              value={quarter}
+              onChange={(e) => setQuarter(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-800"
+            >
+              <option value="Q1">Q1 (Apr - Jun)</option>
+              <option value="Q2">Q2 (Jul - Sep)</option>
+              <option value="Q3">Q3 (Oct - Dec)</option>
+              <option value="Q4">Q4 (Jan - Mar)</option>
+            </select>
+          </div>
+
+          {isDirector && (
+            <>
+              <div>
+                <select
+                  value={salespersonId}
+                  onChange={(e) => setSalespersonId(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                >
+                  <option value="">All Salespeople</option>
+                  {salespeople.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <select
+                  value={industry}
+                  onChange={(e) => setIndustry(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-800"
+                >
+                  <option value="">All Industries</option>
+                  {industryOptions.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          {(salespersonId || industry || category || stage) && (
+            <button
+              onClick={() => {
+                setSalespersonId('');
+                setIndustry('');
+                setCategory('');
+                setStage('');
+              }}
+              className="text-slate-400 hover:text-slate-600 text-xs font-semibold underline ml-auto"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {/* 1. Core Action & Urgent Escalation Metric Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* Overdue Follow-ups (Red Alert) */}
+          <Link
+            href="/activities?view=overdue"
+            className={`p-4 rounded-2xl border transition shadow-xs flex flex-col justify-between ${
+              summary.overdueTasksCount > 0
+                ? 'bg-rose-50/80 border-rose-200 hover:border-rose-400'
+                : 'bg-white border-slate-200 hover:border-slate-300'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600">Overdue Follow-ups</span>
+              <div
+                className={`p-2 rounded-xl ${
+                  summary.overdueTasksCount > 0 ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-400'
+                }`}
+              >
+                <ShieldAlert className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <p
+                className={`text-2xl font-black ${
+                  summary.overdueTasksCount > 0 ? 'text-rose-600' : 'text-slate-800'
+                }`}
+              >
+                {summary.overdueTasksCount || 0}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {summary.overdueTasksCount > 0 ? 'Needs action now' : 'All on time'}
+              </p>
+            </div>
+          </Link>
+
+          {/* Follow-ups Due Today */}
+          <Link
+            href="/activities?view=today"
+            className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-sky-400 transition shadow-xs flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600">Due Today</span>
+              <div className="p-2 rounded-xl bg-sky-50 text-sky-600">
+                <Clock className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className="text-2xl font-black text-slate-900">{summary.dueTodayCount || 0}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Scheduled for today</p>
+            </div>
+          </Link>
+
+          {/* Quotations Awaiting Approval */}
+          <Link
+            href="/proposals"
+            className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-amber-400 transition shadow-xs flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600">Quotes to Approve</span>
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+                <Hourglass className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className="text-2xl font-black text-slate-900">{summary.pendingQuotesCount || 0}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {isDirector ? 'Waiting for you' : 'Waiting for director'}
+              </p>
+            </div>
+          </Link>
+
+          {/* Enquiries Missing Next Action */}
+          <Link
+            href="/activities?view=missing_action"
+            className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-amber-400 transition shadow-xs flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-600">No Next Step</span>
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+                <AlertCircle className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <p className="text-2xl font-black text-slate-900">{summary.missingActionCount || 0}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Requirements with no follow-up</p>
+            </div>
+          </Link>
+        </div>
+
+        {/* 2. Commercial & Financial Performance Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Total & Weighted Pipeline */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              Pipeline
+            </span>
+            <p className="text-2xl font-black text-navy-900 mt-1">
+              {formatINR(summary.totalPipelineValue)}
+            </p>
+            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span className="text-slate-500">Likely value:</span>
+              <span className="font-bold text-sky-700">{formatINR(summary.weightedPipelineValue)}</span>
+            </div>
+          </div>
+
+          {/* Confirmed Orders Booked */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              Orders Booked
+            </span>
+            <p className="text-2xl font-black text-emerald-700 mt-1">
+              {formatINR(summary.totalOrdersNet)}
+            </p>
+            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span className="text-slate-500">With tax:</span>
+              <span className="font-bold text-slate-800">{formatINR(summary.totalOrdersGross)}</span>
+            </div>
+          </div>
+
+          {/* Order payments ticked off as completed */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              Payments Completed
+            </span>
+            <p className="text-2xl font-black text-sky-700 mt-1">
+              {formatINR(summary.totalPaymentsReceived)}
+            </p>
+            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span className="text-slate-500">Marked completed on orders</span>
+            </div>
+          </div>
+
+          {/* Outstanding Receivables */}
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              Payment Due
+            </span>
+            <p className="text-2xl font-black text-navy-900 mt-1">
+              {formatINR(summary.totalPaymentsPending)}
+            </p>
+            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span className="text-slate-500">
+                Raised as due on orders · {formatINR(summary.totalPaymentsNotYetDue || 0)} more not due yet
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Operational Queues Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Overdue Follow-ups List */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <ShieldAlert className="h-4 w-4 text-rose-500" />
+                <h3 className="font-bold text-sm text-slate-800">Overdue Follow-ups</h3>
+              </div>
+              <Link href="/activities?view=overdue" className="text-xs text-sky-600 hover:text-sky-800 font-semibold">
+                View All
+              </Link>
+            </div>
+
+            <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+              {!stats?.overdueTasks || stats.overdueTasks.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400">
+                  <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto mb-2 opacity-80" />
+                  Nothing overdue.
+                </div>
+              ) : (
+                stats.overdueTasks.map((t: any) => (
+                  <div key={t.id} className="p-4 hover:bg-slate-50 transition flex items-center justify-between text-xs">
+                    <div className="min-w-0 pr-3">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-slate-900 truncate">{t.client.name}</span>
+                        <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                          {humanize(t.actionType)}
+                        </span>
+                      </div>
+                      <p className="text-slate-600 mt-0.5 line-clamp-1">{t.description}</p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Due <span className="text-rose-600 font-semibold">{formatDateTime(t.dueDateTime)}</span>
+                        {isDirector && <span> · {t.assignedSalesperson.name}</span>}
+                      </p>
+                    </div>
+
+                    <Link
+                      href={`/clients/${t.clientId}`}
+                      className="shrink-0 bg-slate-100 hover:bg-sky-50 text-sky-700 font-semibold px-2.5 py-1.5 rounded-lg text-xs"
+                    >
+                      Open
+                    </Link>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Quotation Approvals Queue (Director Actionable) */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <FileCheck className="h-4 w-4 text-sky-600" />
+                <h3 className="font-bold text-sm text-slate-800">
+                  {isDirector ? 'Needs Your Approval' : 'Waiting for Approval'}
+                </h3>
+              </div>
+            </div>
+
+            <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+              {/* Pending Quotation Approvals */}
+              {stats?.pendingQuotes?.map((q: any) => (
+                <div key={q.id} className="p-4 hover:bg-slate-50 transition flex items-center justify-between text-xs">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-slate-900">{q.client.name}</span>
+                      <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                        Discount
+                      </span>
+                    </div>
+                    <p className="text-slate-500 mt-0.5">
+                      {formatQuotationNumber(q.quotationNumber, q.currentVersionNumber)} · <strong>{formatINR(q.finalValue)}</strong>
+                      {isDirector && ` · ${q.salesperson.name}`}
+                    </p>
+                  </div>
+
+                  {isDirector ? (
+                    <button
+                      onClick={() => setSelectedQuoteForApproval(q)}
+                      className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow-xs"
+                    >
+                      Review
+                    </button>
+                  ) : (
+                    <span className="text-amber-700 font-semibold text-xs">Pending</span>
+                  )}
+                </div>
+              ))}
+
+              {(!stats?.pendingQuotes || stats.pendingQuotes.length === 0) && (
+                  <div className="p-6 text-center text-xs text-slate-400">
+                    <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto mb-2 opacity-80" />
+                    Nothing waiting.
+                  </div>
+                )}
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Modals */}
+      {selectedQuoteForApproval && (
+        <DirectorQuoteApproveModal
+          isOpen={!!selectedQuoteForApproval}
+          onClose={() => setSelectedQuoteForApproval(null)}
+          onSuccess={() => {
+            setSelectedQuoteForApproval(null);
+            loadDashboard();
+          }}
+          quotation={selectedQuoteForApproval}
+        />
+      )}
+    </AppShell>
+  );
+}

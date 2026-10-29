@@ -3,19 +3,659 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Shared workspace presentation. Business logic and control layout stay local. */
+@layer base {
+  button, input, select, textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: #e0f2fe;
+    color: #0c4a6e;
+  }
+}
+
+@layer components {
+  .crm-workspace {
+    line-height: 1.55;
+  }
+
+  .crm-workspace h1,
+  .crm-workspace h2,
+  .crm-workspace h3 {
+    letter-spacing: -0.025em;
+  }
+
+  .crm-workspace table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .crm-workspace thead th {
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 600;
+    white-space: nowrap;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .crm-workspace tbody td {
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+  }
+
+  .crm-workspace tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .crm-workspace tbody tr:hover {
+    background-color: #f8fafc;
+  }
+
+  .crm-workspace input::placeholder,
+  .crm-workspace textarea::placeholder {
+    color: #94a3b8;
+  }
+
+  .crm-workspace :is(button, a):focus-visible {
+    outline: 2px solid #0284c7;
+    outline-offset: 3px;
+  }
+}
+
+/* Dark pages (the sales dashboard): tokens for surfaces, ink and chart series */
+.crm-dark {
+  color-scheme: dark;
+  --surface-page: #06101f;
+  --surface-1: #0b1a33;
+  --surface-2: #10224a;
+  --border: rgba(255, 255, 255, 0.08);
+  --text-primary: #eef3fb;
+  --text-secondary: #a9b8d0;
+  --text-muted: #7d8fae;
+  --grid: #1b2c4a;
+  --baseline: #2a3d5f;
+  --series-1: #3987e5;
+  --series-2: #199e70;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --delta-up: #3fcf5a;
+  --delta-down: #ef7b7b;
+  color: var(--text-primary);
+}
+.crm-dark thead th {
+  background: transparent;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.crm-dark tbody td {
+  border-bottom: 1px solid var(--border);
+}
+.crm-dark tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+.crm-dark :is(button, a):focus-visible {
+  outline-color: #5598e7;
+}
+
+/* Light-page polish (clients, quotations, orders, targets, reports, settings…).
+   Presentation only, and scoped away from the dark dashboard pages. */
+.crm-workspace:not(.crm-dark) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Gentle fade when a page mounts (opacity only, so fixed modals keep their position) */
+.crm-workspace:not(.crm-dark) > * {
+  animation: crm-fade-in 180ms ease-out;
+}
+
+.crm-workspace:not(.crm-dark) :is(h1, h2, h3) {
+  text-wrap: balance;
+}
+.crm-workspace:not(.crm-dark) p {
+  text-wrap: pretty;
+}
+
+/* Smooth hover/focus colour changes on controls that don't declare their own transition */
+:where(.crm-workspace:not(.crm-dark)) :where(button, a, input, select, textarea) {
+  transition-property: color, background-color, border-color, box-shadow, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+/* Tactile press feedback */
+.crm-workspace:not(.crm-dark) button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.crm-workspace:not(.crm-dark) button:disabled:not([class*="cursor-"]) {
+  cursor: not-allowed;
+}
+
+/* Form fields: hover hint, sky focus border, and a focus ring for fields that lack one */
+.crm-workspace:not(.crm-dark) :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea)[class*="border-slate-"]:hover:not(:focus):not(:disabled) {
+  border-color: #94a3b8;
+}
+.crm-workspace:not(.crm-dark) :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea)[class*="border-slate-"]:focus {
+  border-color: #0ea5e9;
+}
+.crm-workspace:not(.crm-dark) :is(input, select, textarea):focus-visible:not([class*="focus:ring"]) {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.25);
+}
+.crm-workspace:not(.crm-dark) :is(input, select, textarea):disabled {
+  cursor: not-allowed;
+  background-color: #f8fafc;
+  color: #64748b;
+}
+.crm-workspace:not(.crm-dark) :is(input[type="checkbox"], input[type="radio"]) {
+  accent-color: #0284c7;
+}
+
+/* Modals: soft entrance for the backdrop and the dialog panel */
+.crm-workspace:not(.crm-dark) .fixed.inset-0.z-50 {
+  animation: crm-fade-in 150ms ease-out;
+}
+.crm-workspace:not(.crm-dark) .fixed.inset-0.z-50 > div {
+  animation: crm-dialog-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes crm-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes crm-dialog-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Night theme for the non-dashboard pages, so the whole app shares the dashboard's dark blue.
+   Remaps the light utility colours used across those pages; the dashboard itself (.crm-dark) is untouched. */
+@media screen {
+  .crm-night {
+    color-scheme: dark;
+    --n-surface-1: #0b1a33;
+    --n-surface-2: #10224a;
+    --n-field: #081428;
+    --n-border: rgba(255, 255, 255, 0.08);
+    --n-text-primary: #eef3fb;
+    --n-text-secondary: #a9b8d0;
+    --n-text-muted: #7d8fae;
+    color: var(--n-text-primary);
+  }
+
+  .crm-night .bg-white {
+    background-color: var(--n-surface-1);
+  }
+  .crm-night .bg-slate-50,
+  .crm-night .bg-slate-50\/50,
+  .crm-night .bg-slate-50\/60,
+  .crm-night .disabled\:bg-slate-50:disabled {
+    background-color: rgba(255,255,255,0.035);
+  }
+  .crm-night .bg-slate-100 {
+    background-color: rgba(255,255,255,0.06);
+  }
+  .crm-night .bg-slate-200,
+  .crm-night .bg-slate-200\/70 {
+    background-color: rgba(255,255,255,0.1);
+  }
+  .crm-night .hover\:bg-slate-50:hover,
+  .crm-night .hover\:bg-slate-50\/60:hover {
+    background-color: rgba(255,255,255,0.05);
+  }
+  .crm-night .hover\:bg-slate-100:hover {
+    background-color: rgba(255,255,255,0.08);
+  }
+  .crm-night .hover\:bg-slate-200:hover {
+    background-color: rgba(255,255,255,0.12);
+  }
+  .crm-night .bg-navy-900 {
+    background-color: var(--n-surface-2);
+  }
+  .crm-night .hover\:bg-navy-800:hover {
+    background-color: #16306a;
+  }
+  .crm-night .bg-slate-900\/60 {
+    background-color: rgba(2,6,16,0.72);
+  }
+  .crm-night .bg-sky-50,
+  .crm-night .bg-sky-50\/30,
+  .crm-night .bg-sky-50\/40,
+  .crm-night .bg-sky-50\/50,
+  .crm-night .bg-sky-50\/60,
+  .crm-night .bg-sky-50\/70 {
+    background-color: rgba(56,189,248,0.1);
+  }
+  .crm-night .bg-sky-100 {
+    background-color: rgba(56,189,248,0.16);
+  }
+  .crm-night .hover\:bg-sky-50:hover {
+    background-color: rgba(56,189,248,0.14);
+  }
+  .crm-night .hover\:bg-sky-100:hover {
+    background-color: rgba(56,189,248,0.22);
+  }
+  .crm-night .border-sky-100,
+  .crm-night .border-sky-200 {
+    border-color: rgba(56,189,248,0.25);
+  }
+  .crm-night .border-sky-300,
+  .crm-night .border-sky-400 {
+    border-color: rgba(56,189,248,0.45);
+  }
+  .crm-night .hover\:border-sky-300:hover,
+  .crm-night .hover\:border-sky-400:hover {
+    border-color: rgba(56,189,248,0.55);
+  }
+  .crm-night .ring-sky-100,
+  .crm-night .focus\:ring-sky-100:focus {
+    --tw-ring-color: rgba(56,189,248,0.25);
+  }
+  .crm-night .bg-rose-50,
+  .crm-night .bg-rose-50\/30,
+  .crm-night .bg-rose-50\/40,
+  .crm-night .bg-rose-50\/50,
+  .crm-night .bg-rose-50\/60,
+  .crm-night .bg-rose-50\/70 {
+    background-color: rgba(244,63,94,0.1);
+  }
+  .crm-night .bg-rose-100 {
+    background-color: rgba(244,63,94,0.16);
+  }
+  .crm-night .hover\:bg-rose-50:hover {
+    background-color: rgba(244,63,94,0.14);
+  }
+  .crm-night .hover\:bg-rose-100:hover {
+    background-color: rgba(244,63,94,0.22);
+  }
+  .crm-night .border-rose-100,
+  .crm-night .border-rose-200 {
+    border-color: rgba(244,63,94,0.25);
+  }
+  .crm-night .border-rose-300,
+  .crm-night .border-rose-400 {
+    border-color: rgba(244,63,94,0.45);
+  }
+  .crm-night .hover\:border-rose-300:hover,
+  .crm-night .hover\:border-rose-400:hover {
+    border-color: rgba(244,63,94,0.55);
+  }
+  .crm-night .ring-rose-100,
+  .crm-night .focus\:ring-rose-100:focus {
+    --tw-ring-color: rgba(244,63,94,0.25);
+  }
+  .crm-night .bg-amber-50,
+  .crm-night .bg-amber-50\/30,
+  .crm-night .bg-amber-50\/40,
+  .crm-night .bg-amber-50\/50,
+  .crm-night .bg-amber-50\/60,
+  .crm-night .bg-amber-50\/70 {
+    background-color: rgba(245,158,11,0.1);
+  }
+  .crm-night .bg-amber-100 {
+    background-color: rgba(245,158,11,0.16);
+  }
+  .crm-night .hover\:bg-amber-50:hover {
+    background-color: rgba(245,158,11,0.14);
+  }
+  .crm-night .hover\:bg-amber-100:hover {
+    background-color: rgba(245,158,11,0.22);
+  }
+  .crm-night .border-amber-100,
+  .crm-night .border-amber-200 {
+    border-color: rgba(245,158,11,0.25);
+  }
+  .crm-night .border-amber-300,
+  .crm-night .border-amber-400 {
+    border-color: rgba(245,158,11,0.45);
+  }
+  .crm-night .hover\:border-amber-300:hover,
+  .crm-night .hover\:border-amber-400:hover {
+    border-color: rgba(245,158,11,0.55);
+  }
+  .crm-night .ring-amber-100,
+  .crm-night .focus\:ring-amber-100:focus {
+    --tw-ring-color: rgba(245,158,11,0.25);
+  }
+  .crm-night .bg-emerald-50,
+  .crm-night .bg-emerald-50\/30,
+  .crm-night .bg-emerald-50\/40,
+  .crm-night .bg-emerald-50\/50,
+  .crm-night .bg-emerald-50\/60,
+  .crm-night .bg-emerald-50\/70 {
+    background-color: rgba(16,185,129,0.1);
+  }
+  .crm-night .bg-emerald-100 {
+    background-color: rgba(16,185,129,0.16);
+  }
+  .crm-night .hover\:bg-emerald-50:hover {
+    background-color: rgba(16,185,129,0.14);
+  }
+  .crm-night .hover\:bg-emerald-100:hover {
+    background-color: rgba(16,185,129,0.22);
+  }
+  .crm-night .border-emerald-100,
+  .crm-night .border-emerald-200 {
+    border-color: rgba(16,185,129,0.25);
+  }
+  .crm-night .border-emerald-300,
+  .crm-night .border-emerald-400 {
+    border-color: rgba(16,185,129,0.45);
+  }
+  .crm-night .hover\:border-emerald-300:hover,
+  .crm-night .hover\:border-emerald-400:hover {
+    border-color: rgba(16,185,129,0.55);
+  }
+  .crm-night .ring-emerald-100,
+  .crm-night .focus\:ring-emerald-100:focus {
+    --tw-ring-color: rgba(16,185,129,0.25);
+  }
+  .crm-night .bg-violet-50,
+  .crm-night .bg-violet-50\/30,
+  .crm-night .bg-violet-50\/40,
+  .crm-night .bg-violet-50\/50,
+  .crm-night .bg-violet-50\/60,
+  .crm-night .bg-violet-50\/70 {
+    background-color: rgba(139,92,246,0.1);
+  }
+  .crm-night .bg-violet-100 {
+    background-color: rgba(139,92,246,0.16);
+  }
+  .crm-night .hover\:bg-violet-50:hover {
+    background-color: rgba(139,92,246,0.14);
+  }
+  .crm-night .hover\:bg-violet-100:hover {
+    background-color: rgba(139,92,246,0.22);
+  }
+  .crm-night .border-violet-100,
+  .crm-night .border-violet-200 {
+    border-color: rgba(139,92,246,0.25);
+  }
+  .crm-night .border-violet-300,
+  .crm-night .border-violet-400 {
+    border-color: rgba(139,92,246,0.45);
+  }
+  .crm-night .hover\:border-violet-300:hover,
+  .crm-night .hover\:border-violet-400:hover {
+    border-color: rgba(139,92,246,0.55);
+  }
+  .crm-night .ring-violet-100,
+  .crm-night .focus\:ring-violet-100:focus {
+    --tw-ring-color: rgba(139,92,246,0.25);
+  }
+  .crm-night .bg-teal-50,
+  .crm-night .bg-teal-50\/30,
+  .crm-night .bg-teal-50\/40,
+  .crm-night .bg-teal-50\/50,
+  .crm-night .bg-teal-50\/60,
+  .crm-night .bg-teal-50\/70 {
+    background-color: rgba(20,184,166,0.1);
+  }
+  .crm-night .bg-teal-100 {
+    background-color: rgba(20,184,166,0.16);
+  }
+  .crm-night .hover\:bg-teal-50:hover {
+    background-color: rgba(20,184,166,0.14);
+  }
+  .crm-night .hover\:bg-teal-100:hover {
+    background-color: rgba(20,184,166,0.22);
+  }
+  .crm-night .border-teal-100,
+  .crm-night .border-teal-200 {
+    border-color: rgba(20,184,166,0.25);
+  }
+  .crm-night .border-teal-300,
+  .crm-night .border-teal-400 {
+    border-color: rgba(20,184,166,0.45);
+  }
+  .crm-night .hover\:border-teal-300:hover,
+  .crm-night .hover\:border-teal-400:hover {
+    border-color: rgba(20,184,166,0.55);
+  }
+  .crm-night .ring-teal-100,
+  .crm-night .focus\:ring-teal-100:focus {
+    --tw-ring-color: rgba(20,184,166,0.25);
+  }
+  .crm-night .text-slate-900,
+  .crm-night .text-slate-800,
+  .crm-night .text-navy-900,
+  .crm-night .text-navy-950 {
+    color: var(--n-text-primary);
+  }
+  .crm-night .text-slate-700 {
+    color: #d3ddec;
+  }
+  .crm-night .text-slate-600 {
+    color: var(--n-text-secondary);
+  }
+  .crm-night .text-slate-500 {
+    color: #8fa1bf;
+  }
+  .crm-night .text-slate-400 {
+    color: var(--n-text-muted);
+  }
+  .crm-night .text-slate-300 {
+    color: #4f6386;
+  }
+  .crm-night .hover\:text-slate-700:hover,
+  .crm-night .hover\:text-slate-800:hover,
+  .crm-night .hover\:text-slate-900:hover {
+    color: #ffffff;
+  }
+  .crm-night .group:hover .group-hover\:text-slate-500 {
+    color: var(--n-text-secondary);
+  }
+  .crm-night .text-sky-600,
+  .crm-night .hover\:text-sky-600:hover {
+    color: #38bdf8;
+  }
+  .crm-night .text-sky-700,
+  .crm-night .text-sky-800,
+  .crm-night .hover\:text-sky-700:hover,
+  .crm-night .group:hover .group-hover\:text-sky-700 {
+    color: #7dd3fc;
+  }
+  .crm-night .text-sky-900,
+  .crm-night .hover\:text-sky-800:hover,
+  .crm-night .hover\:text-sky-900:hover {
+    color: #bae6fd;
+  }
+  .crm-night .text-rose-600,
+  .crm-night .hover\:text-rose-600:hover {
+    color: #fb7185;
+  }
+  .crm-night .text-rose-700,
+  .crm-night .text-rose-800,
+  .crm-night .hover\:text-rose-700:hover,
+  .crm-night .group:hover .group-hover\:text-rose-700 {
+    color: #fda4af;
+  }
+  .crm-night .text-rose-900,
+  .crm-night .hover\:text-rose-800:hover,
+  .crm-night .hover\:text-rose-900:hover {
+    color: #fecdd3;
+  }
+  .crm-night .text-amber-600,
+  .crm-night .hover\:text-amber-600:hover {
+    color: #fbbf24;
+  }
+  .crm-night .text-amber-700,
+  .crm-night .text-amber-800,
+  .crm-night .hover\:text-amber-700:hover,
+  .crm-night .group:hover .group-hover\:text-amber-700 {
+    color: #fcd34d;
+  }
+  .crm-night .text-amber-900,
+  .crm-night .hover\:text-amber-800:hover,
+  .crm-night .hover\:text-amber-900:hover {
+    color: #fde68a;
+  }
+  .crm-night .text-emerald-600,
+  .crm-night .hover\:text-emerald-600:hover {
+    color: #34d399;
+  }
+  .crm-night .text-emerald-700,
+  .crm-night .text-emerald-800,
+  .crm-night .hover\:text-emerald-700:hover,
+  .crm-night .group:hover .group-hover\:text-emerald-700 {
+    color: #6ee7b7;
+  }
+  .crm-night .text-emerald-900,
+  .crm-night .hover\:text-emerald-800:hover,
+  .crm-night .hover\:text-emerald-900:hover {
+    color: #a7f3d0;
+  }
+  .crm-night .text-violet-600,
+  .crm-night .hover\:text-violet-600:hover {
+    color: #a78bfa;
+  }
+  .crm-night .text-violet-700,
+  .crm-night .text-violet-800,
+  .crm-night .hover\:text-violet-700:hover,
+  .crm-night .group:hover .group-hover\:text-violet-700 {
+    color: #c4b5fd;
+  }
+  .crm-night .text-violet-900,
+  .crm-night .hover\:text-violet-800:hover,
+  .crm-night .hover\:text-violet-900:hover {
+    color: #ddd6fe;
+  }
+  .crm-night .text-teal-600,
+  .crm-night .hover\:text-teal-600:hover {
+    color: #2dd4bf;
+  }
+  .crm-night .text-teal-700,
+  .crm-night .text-teal-800,
+  .crm-night .hover\:text-teal-700:hover,
+  .crm-night .group:hover .group-hover\:text-teal-700 {
+    color: #5eead4;
+  }
+  .crm-night .text-teal-900,
+  .crm-night .hover\:text-teal-800:hover,
+  .crm-night .hover\:text-teal-900:hover {
+    color: #99f6e4;
+  }
+  .crm-night .border-slate-50,
+  .crm-night .border-slate-100,
+  .crm-night .border-slate-200,
+  .crm-night .border-white {
+    border-color: var(--n-border);
+  }
+  .crm-night .border-slate-300 {
+    border-color: rgba(255,255,255,0.14);
+  }
+  .crm-night .hover\:border-slate-300:hover,
+  .crm-night .hover\:border-slate-400:hover {
+    border-color: rgba(255,255,255,0.24);
+  }
+  .crm-night :is(.divide-slate-50, .divide-slate-100, .divide-slate-200) > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--n-border);
+  }
+
+  /* Hover colours that should still win over the remapped base colours */
+  .crm-night .hover\:text-white:hover { color: #ffffff; }
+  .crm-night .hover\:text-rose-500:hover { color: #fb7185; }
+  .crm-night .hover\:text-rose-200:hover { color: #fecdd3; }
+  .crm-night .hover\:bg-white\/5:hover { background-color: rgba(255, 255, 255, 0.05); }
+  .crm-night .hover\:bg-white\/10:hover { background-color: rgba(255, 255, 255, 0.1); }
+  .crm-night .hover\:bg-rose-500\/10:hover { background-color: rgba(244, 63, 94, 0.1); }
+
+  /* Cards sit on the page with a soft shadow like the dashboard's panels */
+  .crm-night .bg-white:is(.rounded-xl, .rounded-2xl) {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Form fields */
+  .crm-night :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea):is(.bg-white, :not([class*="bg-"])) {
+    background-color: var(--n-field);
+    color: var(--n-text-primary);
+  }
+  .crm-workspace.crm-night :is(input, select, textarea):disabled {
+    background-color: rgba(255, 255, 255, 0.03);
+    color: var(--n-text-muted);
+  }
+  .crm-workspace.crm-night :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea)[class*="border-slate-"]:hover:not(:focus):not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.24);
+  }
+  .crm-night :is(input, textarea)::placeholder {
+    color: #5f7194;
+  }
+  .crm-night option {
+    background-color: var(--n-surface-1);
+    color: var(--n-text-primary);
+  }
+  .crm-night :is(button, a):focus-visible {
+    outline-color: #38bdf8;
+  }
+
+  /* Tables */
+  .crm-night thead th {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--n-text-muted);
+    border-bottom: 1px solid var(--n-border);
+  }
+  .crm-night tbody td {
+    border-bottom: 1px solid var(--n-border);
+  }
+  .crm-night tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+  }
+
+  /* Skeleton loaders */
+  .crm-night .animate-pulse {
+    background-color: rgba(255, 255, 255, 0.07);
+  }
+
+  .crm-night ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .crm-night ::-webkit-scrollbar-thumb {
+    background: #2a3d5f;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Print specific for PDF quotation & report view */
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }

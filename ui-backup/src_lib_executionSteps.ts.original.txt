@@ -1,0 +1,62 @@
+// Execution step names, shared by the server and the order screens
+
+export const PO_RECEIVED_STEP = 'Receipt of PO';
+export const DISPATCH_STEP = 'Dispatch';
+export const DELIVERY_STEP = 'Delivery';
+
+// Steps every order goes through, in order; ones that don't apply are marked Not needed on the order
+export const EXECUTION_STEPS = [
+  PO_RECEIVED_STEP,
+  'Negotiate with Vendor',
+  'Issue PO to Vendor',
+  DISPATCH_STEP,
+  DELIVERY_STEP,
+  'Erection',
+  'Installation',
+  'Commissioning',
+];
+
+// The execution step that raises each quoted payment stage as due. A stage is due once every step up
+// to and including its step is done or not needed, e.g. Advance once the PO is received, the vendor
+// negotiated and the vendor PO issued. Stages with other descriptions are raised by hand.
+const STAGE_TRIGGER_STEP: Record<string, string> = {
+  advance: 'Issue PO to Vendor',
+  'before dispatch': DISPATCH_STEP,
+  'upon delivery': DELIVERY_STEP,
+  'on erection': 'Erection',
+  'on installation': 'Installation',
+  'on commissioning': 'Commissioning',
+};
+
+/** The step that raises a payment stage, or null when the stage is raised by hand. */
+export function stageTriggerStep(description: string): string | null {
+  return STAGE_TRIGGER_STEP[description.trim().toLowerCase()] ?? null;
+}
+
+type StepState = { name: string; status: string; completedDate: Date | string | null };
+
+/**
+ * When a stage with a trigger step became due: the latest date among the done steps up to its step,
+ * once all of them are done or not needed. Null while not yet due.
+ */
+export function stageDueDate(triggerStep: string, steps: StepState[]): Date | null {
+  const upTo = EXECUTION_STEPS.indexOf(triggerStep);
+  const relevant = steps.filter((s) => EXECUTION_STEPS.indexOf(s.name) <= upTo);
+  if (relevant.length === 0 || relevant.some((s) => s.status === 'PENDING')) return null;
+  const dates = relevant.filter((s) => s.status === 'DONE' && s.completedDate).map((s) => new Date(s.completedDate!).getTime());
+  return dates.length > 0 ? new Date(Math.max(...dates)) : null;
+}
+
+/**
+ * The stage the invoice GST is asked with: the first stage raised at or after the invoice step,
+ * else the last stage raised by a step, else the last stage.
+ */
+export function invoiceGstStageId(stages: { id: string; sequence: number; description: string }[], invoiceStep: string) {
+  const at = EXECUTION_STEPS.indexOf(invoiceStep);
+  const ordered = [...stages].sort((a, b) => a.sequence - b.sequence);
+  const triggered = ordered
+    .map((s) => ({ s, i: EXECUTION_STEPS.indexOf(stageTriggerStep(s.description) ?? '') }))
+    .filter((x) => x.i >= 0);
+  const next = triggered.filter((x) => x.i >= at).sort((a, b) => a.i - b.i)[0];
+  return (next ?? triggered[triggered.length - 1])?.s.id ?? ordered[ordered.length - 1]?.id ?? null;
+}

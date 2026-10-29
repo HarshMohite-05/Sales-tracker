@@ -1,0 +1,219 @@
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { formatINR, formatDate } from './utils';
+import { amountInWords, formatQuotationNumber, transportationLabel } from './quotation';
+
+// The built-in PDF fonts have no rupee sign, so print "Rs." instead
+function pdfAmount(amount: number): string {
+  return formatINR(amount).replace('₹', 'Rs.');
+}
+
+export interface QuotationPdfData {
+  quotationNumber: string;
+  versionNumber: number;
+  proposalDate: Date | string;
+  validityDays: number;
+  clientName: string;
+  clientAddress?: string | null;
+  clientGst?: string | null;
+  contactPerson?: string | null;
+  salespersonName: string;
+  salespersonMobile?: string | null;
+  salespersonEmail?: string | null;
+  // The salesperson's office, printed in the letterhead
+  office?: { name: string; address?: string | null; phone?: string | null; email?: string | null; gstin?: string | null } | null;
+  enquiryTitle: string;
+  lineItems: Array<{
+    item: string;
+    qty: number;
+    unit: string;
+    unitRate: number;
+    total: number;
+  }>;
+  originalValue: number;
+  discountAmount: number;
+  taxAmount: number;
+  finalValue: number;
+  commercialTerms?: string | null;
+  paymentTerms?: string | null;
+  transportation?: string | null;
+  remarks?: string | null;
+}
+
+export function generateQuotationPdf(data: QuotationPdfData): jsPDF {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  // Header - Corporate Nirmaan WaterTech Solutions styling
+  doc.setFillColor(15, 23, 42); // Navy blue (#0f172a)
+  doc.rect(0, 0, 210, data.office?.address ? 35 : 32, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('NIRMAAN WATERTECH SOLUTIONS', 14, 15);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(203, 213, 225); // Slate 300
+  doc.text('Industrial Water & Wastewater Treatment Systems | EDI, RO, DM, ETP & STP', 14, 21);
+  // The office's contact details where set, else the company's
+  const office = data.office;
+  const contact = [
+    `Email: ${office?.email || 'sales@nirmaanwater.com'}`,
+    `Tel: ${office?.phone || '+91 22 2845 9900'}`,
+    office?.gstin ? `GSTIN: ${office.gstin}` : 'Web: www.nirmaanwater.com',
+  ].join(' | ');
+  if (office?.address) {
+    doc.text(`${office.name} Office: ${office.address}`.substring(0, 125), 14, 26);
+    doc.text(contact, 14, 31);
+  } else {
+    doc.text(contact, 14, 26);
+  }
+
+  // Document Title Banner
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 38, 182, 10, 'F');
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(`COMMERCIAL PROPOSAL / QUOTATION: ${formatQuotationNumber(data.quotationNumber, data.versionNumber)}`, 18, 44.5);
+
+  // Metadata Grid
+  doc.setFontSize(8.5);
+  doc.setTextColor(51, 65, 85);
+
+  // Left Column: Client Details
+  doc.setFont('helvetica', 'bold');
+  doc.text('Prepared For:', 14, 55);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(data.clientName, 14, 60);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  if (data.contactPerson) doc.text(`Kind Attn: ${data.contactPerson}`, 14, 65);
+  if (data.clientAddress) doc.text(`Location: ${data.clientAddress.substring(0, 45)}`, 14, 70);
+  if (data.clientGst) doc.text(`GSTIN: ${data.clientGst}`, 14, 75);
+
+  // Right Column: Quotation Details
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(51, 65, 85);
+  doc.text('Proposal Details:', 125, 55);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Date: ${formatDate(data.proposalDate)}`, 125, 60);
+  doc.text(`Validity: ${data.validityDays} Days`, 125, 65);
+  doc.text(`Sales Engineer: ${data.salespersonName}`, 125, 70);
+  if (data.salespersonMobile) doc.text(`Contact: ${data.salespersonMobile}`, 125, 75);
+
+  // Requirement Subject
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(`Subject: ${data.enquiryTitle}`, 14, 84);
+
+  // Line items table
+  const tableRows = data.lineItems.map((item, idx) => [
+    (idx + 1).toString(),
+    item.item,
+    `${item.qty} ${item.unit}`,
+    pdfAmount(item.unitRate),
+    pdfAmount(item.total),
+  ]);
+
+  autoTable(doc, {
+    startY: 89,
+    head: [['#', 'Item Description / Specifications', 'Qty', 'Unit Rate', 'Amount']],
+    body: tableRows,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [15, 23, 42],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8.5,
+    },
+    styles: {
+      fontSize: 8,
+      cellPadding: 2.5,
+      textColor: [15, 23, 42],
+    },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 95 },
+      2: { cellWidth: 22, halign: 'center' },
+      3: { cellWidth: 27, halign: 'right' },
+      4: { cellWidth: 28, halign: 'right' },
+    },
+  });
+
+  // Calculate position after table
+  const finalY = (doc as any).lastAutoTable.finalY + 6;
+
+  // Commercial summary box: price, GST on it (when quoted) and the total
+  const priceBeforeGst = data.originalValue - (data.discountAmount || 0);
+  const hasGst = data.taxAmount > 0;
+  const gstPct = hasGst && priceBeforeGst > 0 ? Math.round((data.taxAmount / priceBeforeGst) * 10000) / 100 : 0;
+  const boxH = hasGst ? 32 : 20;
+  doc.setFillColor(248, 250, 252);
+  doc.rect(14, finalY, 182, boxH, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(14, finalY, 182, boxH, 'S');
+
+  let lineY = finalY + 7;
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  if (hasGst) {
+    doc.setFont('helvetica', 'normal');
+    doc.text('Price:', 18, lineY);
+    doc.text(pdfAmount(priceBeforeGst), 192, lineY, { align: 'right' });
+    lineY += 6;
+    doc.text(`GST @ ${gstPct}%:`, 18, lineY);
+    doc.text(pdfAmount(data.taxAmount), 192, lineY, { align: 'right' });
+    lineY += 6;
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.text(hasGst ? 'Total Amount (incl. GST):' : 'Total Amount:', 18, lineY);
+  doc.text(pdfAmount(data.finalValue), 192, lineY, { align: 'right' });
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text(doc.splitTextToSize(`(${amountInWords(data.finalValue)})`, 174), 18, lineY + 7);
+
+  // Commercial Terms
+  let termsY = finalY + boxH + 8;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Commercial Terms & Conditions:', 14, termsY);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  // Quotations from the current form carry their terms as separate fields; older ones have free text
+  const termLines = [
+    data.paymentTerms && `Payment Terms: ${data.paymentTerms}`,
+    data.transportation && `Transportation: ${transportationLabel(data.transportation)}`,
+    data.remarks && `Remark: ${data.remarks}`,
+  ].filter(Boolean) as string[];
+  const termsText = termLines.length > 0
+    ? termLines.join('\n')
+    : data.commercialTerms || 'Standard Payment Terms: 30% Advance, 60% against Proforma Invoice before dispatch, 10% after commissioning. Taxes extra as applicable. Delivery 6-8 weeks from clear PO.';
+  const splitTerms = doc.splitTextToSize(termsText, 182);
+  doc.text(splitTerms, 14, termsY + 6);
+
+  // Signoff footer
+  const footerY = 270;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('For NIRMAAN WATERTECH SOLUTIONS', 135, footerY);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Authorised Signatory', 135, footerY + 14);
+
+  return doc;
+}

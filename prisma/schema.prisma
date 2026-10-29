@@ -1,0 +1,1166 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  DIRECTOR
+  SALESPERSON
+}
+
+enum EnquiryCategory {
+  PLANT
+  CHEMICALS // no longer offered for new requirements (split into basic and special); kept for existing ones
+  BASIC_CHEMICALS
+  SPECIAL_CHEMICALS
+  SPARES
+  AMC // shown as "O&M & AMC"
+  EVALUATION // no longer offered for new requirements; kept for existing ones
+  OTHER // the type is typed in, stored in Enquiry.categoryOther
+}
+
+enum EnquiryStage {
+  NEW
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  ON_HOLD
+  WON
+  LOST
+}
+
+enum ActivityType {
+  CALL
+  WHATSAPP
+  EMAIL
+  MEETING
+  SITE_VISIT
+}
+
+enum DiscussionType {
+  INTRODUCTORY
+  TECHNICAL
+  COMMERCIAL
+}
+
+enum TaskType {
+  CALL
+  MEETING
+  SITE_VISIT
+  QUOTATION_PREP
+  QUOTATION_FOLLOWUP
+  ORDER_CONFIRMATION
+  PAYMENT_COLLECTION
+  AMC_RENEWAL
+  REPEAT_SALES
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum NotificationType {
+  REMINDER
+  OVERDUE_ESCALATION
+  APPROVAL_REQUEST
+  DIRECTOR_INSTRUCTION
+  VERIFICATION
+  MORNING_SUMMARY // the day's to-do list, at the time each person chooses
+  ACTIVITY_UPDATE // a change someone made, sent to the directors
+}
+
+enum QuotationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  SUPERSEDED
+}
+
+enum TransportationTerms {
+  EXTRA_AT_ACTUAL
+  INCLUDED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  CONFIRMED
+  IN_EXECUTION
+  DISPATCHED
+  COMPLETED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum VerificationStatus {
+  SUBMITTED
+  VERIFIED
+  REJECTED
+}
+
+enum PaymentMode {
+  NEFT_RTGS
+  CHEQUE
+  UPI
+  CASH
+  BANK_TRANSFER
+}
+
+enum Quarter {
+  Q1
+  Q2
+  Q3
+  Q4
+}
+
+enum TargetPeriod {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+  CUSTOM // the director picks the start and end dates
+}
+
+enum TargetType {
+  ORDERS_BOOKED
+  VERIFIED_COLLECTIONS
+  NEW_ENQUIRIES
+  MEETINGS
+  QUOTATIONS_SENT
+}
+
+enum MonetaryBasis {
+  NET
+  GROSS
+}
+
+enum SlabMode {
+  FLAT_ON_TOTAL
+  MARGINAL_SLABS
+}
+
+enum IncentiveStatus {
+  CALCULATED
+  PENDING_APPROVAL
+  APPROVED
+  PAID
+  REVERSED
+}
+
+// A payment's incentive: earned when the payment is received, approved by a director, then paid.
+// Reversed: the payment was reversed or removed before the incentive was paid.
+enum IncentiveEntryStatus {
+  EARNED
+  APPROVED
+  PAID
+  REVERSED
+}
+
+// Clawback: takes back an incentive already paid on a payment that was later reversed or removed
+enum IncentiveEntryKind {
+  EARNING
+  CLAWBACK
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  REASSIGN
+  STAGE_CHANGE
+  APPROVE
+  REJECT
+  VERIFY
+  RESCHEDULE
+  PAYOUT
+  RESTORE
+  PURGE
+}
+
+model User {
+  id                     String   @id @default(uuid())
+  email                  String   @unique
+  name                   String
+  passwordHash           String
+  role                   Role
+  mobile                 String?
+  designation            String?
+  isActive               Boolean  @default(true)
+  // The office they work from (Mumbai, Ahmedabad); their clients, quotations and orders count under it
+  officeId               String?
+  office                 Office?  @relation(fields: [officeId], references: [id])
+  // Bumped on sign-out so every session token issued before it stops working
+  sessionVersion         Int      @default(0)
+  // Morning summary: on or off, the time it comes (HH:mm, India time) and the last day it was sent
+  // (YYYY-MM-DD), so it comes once a day
+  morningSummaryEnabled  Boolean  @default(true)
+  morningSummaryTime     String   @default("09:00")
+  morningSummaryLastSent String?
+  // Directors: which kinds of updates also buzz their phone, e.g. ["ORDERS", "PAYMENTS"]; null is the default set
+  pushCategories         Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  assignedClients       Client[]                @relation("ClientAssignedSalesperson")
+  createdClients        Client[]                @relation("ClientCreatedBy")
+  assignedEnquiries     Enquiry[]               @relation("EnquiryAssignedSalesperson")
+  createdEnquiries      Enquiry[]               @relation("EnquiryCreatedBy")
+  stageChanges          EnquiryStageHistory[]
+  activities            Activity[]              @relation("ActivitySalesperson")
+  assignedTasks         Task[]                  @relation("TaskAssignedSalesperson")
+  createdTasks          Task[]                  @relation("TaskCreatedBy")
+  rescheduledTasks      TaskRescheduleHistory[]
+  notifications         Notification[]
+  quotations            Quotation[]             @relation("QuotationSalesperson")
+  quotationVersions     QuotationVersion[]      @relation("QuotationVersionCreatedBy")
+  approvalRequests      QuotationApproval[]     @relation("ApprovalRequestedBy")
+  approvalDecisions     QuotationApproval[]     @relation("ApprovalDecidedBy")
+  assignedOrders        Order[]                 @relation("OrderAssignedSalesperson")
+  recordedReceipts      Receipt[]               @relation("ReceiptRecordedBy")
+  verifiedReceipts      Receipt[]               @relation("ReceiptVerifiedBy")
+  targets               Target[]                @relation("SalespersonTargets")
+  createdTargets        Target[]                @relation("TargetsCreatedBy")
+  incentivePolicies     IncentivePolicy[]       @relation("PolicyCreatedBy")
+  incentiveCalculations IncentiveCalculation[]  @relation("SalespersonCalculations")
+  approvedIncentives    IncentiveCalculation[]  @relation("IncentiveApprovedBy")
+  receivedPayouts       IncentivePayout[]       @relation("PayoutSalesperson")
+  processedPayouts      IncentivePayout[]       @relation("PayoutProcessedBy")
+  incentiveRatesSet     IncentiveRate[]         @relation("IncentiveRateSetBy")
+  ownIncentiveRates     IncentiveRate[]         @relation("IncentiveRateSalesperson")
+  orderSplitsSet        OrderIncentiveSplit[]   @relation("OrderSplitSetBy")
+  incentiveEntries      IncentiveEntry[]        @relation("IncentiveEntrySalesperson")
+  directorComments      DirectorComment[]       @relation("DirectorAuthor")
+  targetedComments      DirectorComment[]       @relation("DirectorTargetSalesperson")
+  uploadedDocuments     DocumentAttachment[]    @relation("DocumentUploadedBy")
+  auditEvents           AuditEvent[]            @relation("ActorAuditEvents")
+  importBatches         ImportBatch[]           @relation("ImportBatchCreatedBy")
+  deletedItems          RecycleBinItem[]        @relation("RecycleBinDeletedBy")
+  completedPayments     OrderPaymentStage[]     @relation("PaymentStageCompletedBy")
+  executionUpdates      OrderExecutionStep[]    @relation("ExecutionStepUpdatedBy")
+  deliveryRevisions     OrderDeliveryRevision[]
+  recordedOrderReceipts OrderReceipt[]          @relation("OrderReceiptRecordedBy")
+  reversedOrderReceipts OrderReceipt[]          @relation("OrderReceiptReversedBy")
+  excessReviews         Order[]                 @relation("ExcessReviewedBy")
+  settingUpdates        AppSetting[]            @relation("AppSettingUpdatedBy")
+  pushSubscriptions     PushSubscription[]
+
+  @@index([role, isActive])
+}
+
+// A company office. Employees belong to one; their records are reported under it, and its details print on
+// their quotations' letterhead
+model Office {
+  id        String   @id @default(uuid())
+  code      String   @unique // short code, e.g. MUM, AMD
+  name      String   @unique // e.g. Mumbai
+  address   String?
+  phone     String?
+  email     String?
+  gstin     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+}
+
+// A phone or browser that receives this person's notifications as push messages (one per device)
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Client {
+  id              String   @id @default(uuid())
+  name            String
+  code            String?  @unique // short code used in requirement numbers, e.g. NGPL -> NGPL/001
+  industrySegment String
+  clientType      String?  @default("End User")
+  gstNumber       String?
+  website         String?
+  state           String?
+  city            String?
+  address         String?
+  assignedToId    String
+  assignedTo      User     @relation("ClientAssignedSalesperson", fields: [assignedToId], references: [id])
+  createdById     String
+  createdBy       User     @relation("ClientCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  contacts   Contact[]
+  sites      Site[]
+  enquiries  Enquiry[]
+  activities Activity[]
+  tasks      Task[]
+  quotations Quotation[]
+  orders     Order[]
+  invoices   Invoice[]
+  receipts   Receipt[]
+
+  @@index([name])
+  @@index([assignedToId])
+}
+
+model Contact {
+  id             String   @id @default(uuid())
+  clientId       String
+  client         Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name           String
+  designation    String?
+  mobile         String
+  email          String?
+  whatsappNumber String?
+  isPrimary      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  enquiries  Enquiry[]
+  activities Activity[]
+
+  @@index([clientId])
+  @@index([mobile])
+}
+
+model Site {
+  id            String   @id @default(uuid())
+  clientId      String
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  siteName      String
+  address       String
+  city          String
+  state         String?
+  pincode       String?
+  contactPerson String?
+  mobile        String?
+  isPrimary     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enquiries Enquiry[]
+
+  @@index([clientId])
+}
+
+model Enquiry {
+  id                 String            @id @default(uuid())
+  enquiryNumber      String            @unique
+  clientId           String
+  client             Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  contactId          String?
+  contact            Contact?          @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  siteId             String?
+  site               Site?             @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  assignedToId       String
+  assignedTo         User              @relation("EnquiryAssignedSalesperson", fields: [assignedToId], references: [id])
+  title              String
+  category           EnquiryCategory // first of categories, kept for filters and older code
+  categories         EnquiryCategory[] @default([]) // every type ticked, e.g. Plant + Basic Chemicals
+  categoryOther      String?
+  requirementSummary String
+  techSpecs          String?
+  capacity           String?
+  capacityUnit       String?
+  // Current value: the approximate value until quoted, then the quotation's latest price
+  estimatedValue     Decimal           @default(0) @db.Decimal(14, 2)
+  approxValue        Decimal           @default(0) @db.Decimal(14, 2) // as entered when the requirement was added
+  recurringAmount    Decimal?          @default(0) @db.Decimal(14, 2)
+  recurringFrequency String?
+  source             String?
+  probability        Int               @default(30)
+  stage              EnquiryStage      @default(NEW)
+  expectedCloseDate  DateTime?
+  competitor         String?
+  holdReason         String?
+  holdReviewDate     DateTime?
+  lostReason         String?
+  exceptionReason    String?
+  isException        Boolean           @default(false)
+  createdById        String
+  createdBy          User              @relation("EnquiryCreatedBy", fields: [createdById], references: [id])
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  stageHistory EnquiryStageHistory[]
+  activities   Activity[]
+  tasks        Task[]
+  quotations   Quotation[]
+  orders       Order[]
+
+  @@index([clientId])
+  @@index([assignedToId])
+  @@index([stage])
+  @@index([category])
+}
+
+model EnquiryStageHistory {
+  id          String       @id @default(uuid())
+  enquiryId   String
+  enquiry     Enquiry      @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  fromStage   EnquiryStage
+  toStage     EnquiryStage
+  reason      String?
+  changedById String
+  changedBy   User         @relation(fields: [changedById], references: [id])
+  createdAt   DateTime     @default(now())
+
+  @@index([enquiryId])
+}
+
+model Activity {
+  id             String         @id @default(uuid())
+  clientId       String
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  enquiryId      String?
+  enquiry        Enquiry?       @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+  contactId      String?
+  contact        Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  salespersonId  String
+  salesperson    User           @relation("ActivitySalesperson", fields: [salespersonId], references: [id])
+  activityType   ActivityType
+  outcome        String
+  discussionType DiscussionType @default(INTRODUCTORY)
+  keyPoints      String
+  remarks        String?
+  activityDate   DateTime       @default(now())
+  nextAction     String?
+  nextActionDate DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([clientId])
+  @@index([enquiryId])
+  @@index([salespersonId])
+  @@index([activityDate])
+}
+
+model Task {
+  id                    String       @id @default(uuid())
+  taskNumber            String       @unique
+  clientId              String
+  client                Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  enquiryId             String?
+  enquiry               Enquiry?     @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+  quotationId           String?
+  quotation             Quotation?   @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  orderId               String?
+  order                 Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  invoiceId             String?
+  invoice               Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  assignedSalespersonId String
+  assignedSalesperson   User         @relation("TaskAssignedSalesperson", fields: [assignedSalespersonId], references: [id])
+  createdById           String
+  createdBy             User         @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  actionType            TaskType
+  description           String
+  priority              TaskPriority @default(MEDIUM)
+  dueDateTime           DateTime
+  status                TaskStatus   @default(PENDING)
+  completionOutcome     String?
+  completedAt           DateTime?
+  reminderSettings      Json?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  rescheduleHistory TaskRescheduleHistory[]
+  notifications     Notification[]
+
+  @@index([assignedSalespersonId, status, dueDateTime])
+  @@index([clientId])
+  @@index([enquiryId])
+}
+
+model TaskRescheduleHistory {
+  id                  String   @id @default(uuid())
+  taskId              String
+  task                Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  previousDueDateTime DateTime
+  newDueDateTime      DateTime
+  reason              String
+  rescheduledById     String
+  rescheduledBy       User     @relation(fields: [rescheduledById], references: [id])
+  createdAt           DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model Notification {
+  id           String           @id @default(uuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId       String?
+  task         Task?            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  title        String
+  message      String
+  type         NotificationType
+  isRead       Boolean          @default(false)
+  // The page it opens, e.g. /clients/<id>
+  link         String?
+  // What it is about: a follow-up reminder (FOLLOWUP_SOON, FOLLOWUP_DUE) or, for directors' updates, the kind
+  // of update (ORDERS, PAYMENTS, …) used to decide whether it also buzzes the phone
+  category     String?
+  scheduledFor DateTime         @default(now())
+  createdAt    DateTime         @default(now())
+
+  deliveries NotificationDelivery[]
+
+  @@index([userId, isRead])
+  @@index([taskId])
+  @@index([userId, createdAt])
+}
+
+model NotificationDelivery {
+  id             String       @id @default(uuid())
+  notificationId String
+  notification   Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  channel        String       @default("IN_APP")
+  status         String       @default("SENT")
+  attempts       Int          @default(1)
+  errorDetails   String?
+  sentAt         DateTime     @default(now())
+
+  @@index([notificationId])
+}
+
+model Quotation {
+  id                   String               @id @default(uuid())
+  quotationNumber      String               @unique
+  clientId             String
+  client               Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  enquiryId            String
+  enquiry              Enquiry              @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  salespersonId        String
+  salesperson          User                 @relation("QuotationSalesperson", fields: [salespersonId], references: [id])
+  currentVersionNumber Int                  @default(0)
+  approvalStatus       QuotationStatus      @default(DRAFT)
+  proposalDate         DateTime             @default(now())
+  validityDays         Int                  @default(30)
+  originalValue        Decimal              @default(0) @db.Decimal(14, 2)
+  discountAmount       Decimal              @default(0) @db.Decimal(14, 2)
+  discountPercent      Decimal              @default(0) @db.Decimal(5, 2)
+  taxAmount            Decimal              @default(0) @db.Decimal(14, 2)
+  finalValue           Decimal              @default(0) @db.Decimal(14, 2)
+  commercialTerms      String?
+  product              String?
+  paymentTerms         String?
+  paymentStages        Json? // [{ percent, description }]; paymentTerms holds the same as text
+  transportation       TransportationTerms?
+  remarks              String?
+  lossReason           String?
+  closedAt             DateTime?
+  sentAt               DateTime?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  versions  QuotationVersion[]
+  approvals QuotationApproval[]
+  tasks     Task[]
+  orders    Order[]
+
+  @@index([clientId])
+  @@index([enquiryId])
+  @@index([salespersonId])
+  @@index([approvalStatus])
+}
+
+model QuotationVersion {
+  id              String               @id @default(uuid())
+  quotationId     String
+  quotation       Quotation            @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  proposalDate    DateTime             @default(now())
+  lineItems       Json
+  originalValue   Decimal              @db.Decimal(14, 2)
+  discountAmount  Decimal              @db.Decimal(14, 2)
+  discountPercent Decimal              @db.Decimal(5, 2)
+  taxAmount       Decimal              @db.Decimal(14, 2)
+  finalValue      Decimal              @db.Decimal(14, 2)
+  commercialTerms String?
+  product         String?
+  paymentTerms    String?
+  paymentStages   Json?
+  transportation  TransportationTerms?
+  remarks         String?
+  isImmutable     Boolean              @default(false)
+  createdById     String
+  createdBy       User                 @relation("QuotationVersionCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime             @default(now())
+
+  approvals QuotationApproval[]
+  orders    Order[]
+
+  @@unique([quotationId, versionNumber])
+}
+
+model QuotationApproval {
+  id                 String            @id @default(uuid())
+  quotationId        String
+  quotation          Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  quotationVersionId String?
+  quotationVersion   QuotationVersion? @relation(fields: [quotationVersionId], references: [id], onDelete: SetNull)
+  requestedById      String
+  requestedBy        User              @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
+  status             ApprovalStatus    @default(PENDING)
+  discountPercent    Decimal           @db.Decimal(5, 2)
+  reason             String
+  decisionNotes      String?
+  decidedById        String?
+  decidedBy          User?             @relation("ApprovalDecidedBy", fields: [decidedById], references: [id])
+  decidedAt          DateTime?
+  createdAt          DateTime          @default(now())
+
+  @@index([quotationId])
+  @@index([status])
+}
+
+model Order {
+  id                    String               @id @default(uuid())
+  orderNumber           String               @unique
+  clientPoNumber        String?
+  poDate                DateTime? // date on the client's PO
+  deliveryDate          DateTime? // target delivery date: the current one, after any revisions
+  clientId              String
+  client                Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  enquiryId             String?
+  enquiry               Enquiry?             @relation(fields: [enquiryId], references: [id], onDelete: SetNull)
+  quotationId           String?
+  quotation             Quotation?           @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  quotationVersionId    String?
+  quotationVersion      QuotationVersion?    @relation(fields: [quotationVersionId], references: [id], onDelete: SetNull)
+  assignedSalespersonId String
+  assignedSalesperson   User                 @relation("OrderAssignedSalesperson", fields: [assignedSalespersonId], references: [id])
+  orderDate             DateTime             @default(now())
+  items                 Json
+  netValue              Decimal              @db.Decimal(14, 2)
+  discountValue         Decimal              @default(0) @db.Decimal(14, 2)
+  taxValue              Decimal              @default(0) @db.Decimal(14, 2)
+  grossValue            Decimal              @db.Decimal(14, 2)
+  // Commercial terms as quoted, copied from the quotation when the order is confirmed
+  product               String?
+  paymentTerms          String?
+  paymentStages         Json?
+  transportation        TransportationTerms?
+  orderStatus           OrderStatus          @default(CONFIRMED)
+  isDirectOrder         Boolean              @default(false)
+  directOrderReason     String?
+  remarks               String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  tasks             Task[]
+  invoices          Invoice[]
+  payments          OrderPaymentStage[] // payments due, one per quoted payment stage
+  executionSteps    OrderExecutionStep[]
+  receipts          OrderReceipt[]
+  incentiveSplits   OrderIncentiveSplit[]
+  deliveryRevisions OrderDeliveryRevision[] // target delivery date changes, oldest first
+
+  // Deductions set when the order is confirmed. Each base is kept as it was at confirmation
+  // (NET = order value before GST, GROSS = including GST), so later rule changes don't alter this order.
+  tdsEnabled       Boolean   @default(false)
+  tdsPercent       Decimal   @default(0) @db.Decimal(5, 2)
+  tdsBase          String    @default("NET")
+  tdsAmount        Decimal   @default(0) @db.Decimal(14, 2)
+  retentionEnabled Boolean   @default(false)
+  retentionPercent Decimal   @default(0) @db.Decimal(5, 2)
+  retentionBase    String    @default("GROSS")
+  retentionAmount  Decimal   @default(0) @db.Decimal(14, 2)
+  retentionDueDate DateTime? // when the withheld retention is due to be paid
+  expectedPayment  Decimal   @default(0) @db.Decimal(14, 2) // order total less TDS and retention
+
+  // The one execution step at which the invoice is raised, and the GST asked for with it
+  invoiceStepId     String?
+  invoiceDate       DateTime?
+  invoiceGstPercent Decimal?  @db.Decimal(5, 2)
+  invoiceGstAmount  Decimal   @default(0) @db.Decimal(14, 2)
+
+  // An excess receipt is flagged until someone records how it was dealt with
+  excessReviewNote   String?
+  excessReviewedAt   DateTime?
+  excessReviewedById String?
+  excessReviewedBy   User?     @relation("ExcessReviewedBy", fields: [excessReviewedById], references: [id])
+
+  @@index([clientId])
+  @@index([assignedSalespersonId])
+  @@index([orderStatus])
+  @@index([orderDate])
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNumber String        @unique
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  clientId      String
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  invoiceDate   DateTime      @default(now())
+  dueDate       DateTime
+  netAmount     Decimal       @db.Decimal(14, 2)
+  taxAmount     Decimal       @default(0) @db.Decimal(14, 2)
+  grossAmount   Decimal       @db.Decimal(14, 2)
+  paymentStatus InvoiceStatus @default(UNPAID)
+  remarks       String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  tasks       Task[]
+  allocations ReceiptAllocation[]
+
+  @@index([clientId])
+  @@index([orderId])
+  @@index([paymentStatus])
+  @@index([dueDate])
+}
+
+model Receipt {
+  id                 String             @id @default(uuid())
+  receiptNumber      String             @unique
+  clientId           String
+  client             Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  receiptDate        DateTime           @default(now())
+  amount             Decimal            @db.Decimal(14, 2)
+  paymentMode        PaymentMode
+  transactionRef     String?
+  proofDocument      String?
+  recordedById       String
+  recordedBy         User               @relation("ReceiptRecordedBy", fields: [recordedById], references: [id])
+  verificationStatus VerificationStatus @default(SUBMITTED)
+  rejectionReason    String?
+  verifiedById       String?
+  verifiedBy         User?              @relation("ReceiptVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  allocations ReceiptAllocation[]
+
+  @@index([clientId])
+  @@index([recordedById])
+  @@index([verificationStatus])
+  @@index([receiptDate])
+}
+
+model ReceiptAllocation {
+  id              String   @id @default(uuid())
+  receiptId       String
+  receipt         Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  invoiceId       String
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  allocatedAmount Decimal  @db.Decimal(14, 2)
+  createdAt       DateTime @default(now())
+
+  @@index([receiptId])
+  @@index([invoiceId])
+}
+
+model Target {
+  id               String        @id @default(uuid())
+  salespersonId    String
+  salesperson      User          @relation("SalespersonTargets", fields: [salespersonId], references: [id], onDelete: Cascade)
+  financialYear    String
+  periodType       TargetPeriod  @default(QUARTERLY)
+  // Which period of the financial year: M01–M12 (calendar month), Q1–Q4, H1/H2, FY, or C<start>-<end>
+  // (custom dates, e.g. C20260401-20260930; its financial year is the one it starts in)
+  periodKey        String
+  periodStart      DateTime
+  periodEnd        DateTime
+  // 1 for the first target of a period; a next target, set once the previous one is achieved, is one higher
+  level            Int           @default(1)
+  // Order booking targets: incentive % per business type, e.g. {"PLANT": {"incentive": 1}}, on bookings from
+  // the previous target up to this one; past the last target of the period its % continues
+  typeRates        Json?
+  // Collection targets (older): extra incentive % on top of the business-type rate once collections pass it
+  bonusRatePercent Decimal?      @db.Decimal(5, 2)
+  targetType       TargetType
+  targetValue      Decimal       @db.Decimal(14, 2)
+  monetaryBasis    MonetaryBasis @default(NET)
+  setById          String
+  setBy            User          @relation("TargetsCreatedBy", fields: [setById], references: [id])
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([salespersonId, financialYear, periodKey, targetType, level])
+  @@index([periodStart, periodEnd])
+}
+
+model IncentivePolicy {
+  id                  String   @id @default(uuid())
+  title               String
+  financialYear       String
+  effectiveFrom       DateTime
+  effectiveTo         DateTime
+  basis               String   @default("BOOKED_ORDERS")
+  eligibleCategories  Json?
+  baseRatePercent     Decimal  @db.Decimal(5, 2)
+  minThresholdPercent Decimal  @default(0) @db.Decimal(5, 2)
+  slabMode            SlabMode @default(FLAT_ON_TOTAL)
+  slabs               Json?
+  isActive            Boolean  @default(true)
+  createdById         String
+  createdBy           User     @relation("PolicyCreatedBy", fields: [createdById], references: [id])
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  calculations IncentiveCalculation[]
+
+  @@index([financialYear, isActive])
+}
+
+model IncentiveCalculation {
+  id                   String          @id @default(uuid())
+  salespersonId        String
+  salesperson          User            @relation("SalespersonCalculations", fields: [salespersonId], references: [id], onDelete: Cascade)
+  policyId             String
+  policy               IncentivePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  financialYear        String
+  quarter              Quarter
+  eligibleAchievement  Decimal         @db.Decimal(14, 2)
+  calculatedIncentive  Decimal         @db.Decimal(14, 2)
+  finalApprovedAmount  Decimal         @default(0) @db.Decimal(14, 2)
+  status               IncentiveStatus @default(CALCULATED)
+  calculationBreakdown Json
+  approvedById         String?
+  approvedBy           User?           @relation("IncentiveApprovedBy", fields: [approvedById], references: [id])
+  approvedAt           DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  payouts IncentivePayout[]
+
+  @@unique([salespersonId, policyId, financialYear, quarter])
+  @@index([financialYear, quarter])
+  @@index([status])
+}
+
+// Incentive % for a business type from a date; a change adds a row, so history is kept. A payment
+// uses the rate in force on the day it was received: the salesperson's own rate when they have one,
+// else the company rate (no salesperson).
+model IncentiveRate {
+  id            String          @id @default(uuid())
+  salespersonId String?
+  salesperson   User?           @relation("IncentiveRateSalesperson", fields: [salespersonId], references: [id], onDelete: Cascade)
+  businessType  EnquiryCategory
+  ratePercent   Decimal         @db.Decimal(5, 2)
+  effectiveFrom DateTime
+  // Set when a rate from an earlier date replaced it; kept for the history, no longer used
+  supersededAt  DateTime?
+  setById       String
+  setBy         User            @relation("IncentiveRateSetBy", fields: [setById], references: [id])
+  createdAt     DateTime        @default(now())
+
+  @@index([businessType, effectiveFrom])
+  @@index([salespersonId, businessType])
+}
+
+// How much of a mixed-type order's net value is each business type, e.g. Plant ₹80,000 + Basic
+// Chemicals ₹20,000; each payment on the order is shared in that ratio
+model OrderIncentiveSplit {
+  id           String          @id @default(uuid())
+  orderId      String
+  order        Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  businessType EnquiryCategory
+  amount       Decimal         @db.Decimal(14, 2)
+  setById      String
+  setBy        User            @relation("OrderSplitSetBy", fields: [setById], references: [id])
+  updatedAt    DateTime        @updatedAt
+
+  @@unique([orderId, businessType])
+}
+
+// One payment's incentive for one business type. Order, client and amounts are copied in, so the
+// record stays when the order is deleted; one row per payment, type and kind, so a payment is never
+// counted twice.
+model IncentiveEntry {
+  id              String               @id @default(uuid())
+  kind            IncentiveEntryKind   @default(EARNING)
+  receiptId       String
+  orderId         String
+  orderNumber     String
+  clientId        String
+  clientName      String
+  salespersonId   String
+  salesperson     User                 @relation("IncentiveEntrySalesperson", fields: [salespersonId], references: [id])
+  businessType    EnquiryCategory
+  receivedDate    DateTime
+  financialYear   String
+  receiptAmount   Decimal              @db.Decimal(14, 2)
+  eligibleAmount  Decimal              @db.Decimal(14, 2) // this type's share of the payment, excluding GST
+  ratePercent     Decimal              @db.Decimal(5, 2)
+  incentiveAmount Decimal              @db.Decimal(14, 2) // negative on a clawback; includes the bonus
+  bonusEligible   Decimal              @default(0) @db.Decimal(14, 2) // part of eligibleAmount beyond an achieved collection target
+  bonusAmount     Decimal              @default(0) @db.Decimal(14, 2) // the extra earned on it
+  status          IncentiveEntryStatus @default(EARNED)
+  approvedById    String?
+  approvedAt      DateTime?
+  paidById        String?
+  paidAt          DateTime?
+  paymentRef      String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@unique([receiptId, businessType, kind])
+  @@index([salespersonId, financialYear])
+  @@index([status])
+  @@index([orderId])
+}
+
+model IncentivePayout {
+  id            String               @id @default(uuid())
+  calculationId String
+  calculation   IncentiveCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  salespersonId String
+  salesperson   User                 @relation("PayoutSalesperson", fields: [salespersonId], references: [id], onDelete: Cascade)
+  payoutDate    DateTime             @default(now())
+  amount        Decimal              @db.Decimal(14, 2)
+  paymentRef    String?
+  notes         String?
+  paidById      String
+  paidBy        User                 @relation("PayoutProcessedBy", fields: [paidById], references: [id])
+  createdAt     DateTime             @default(now())
+
+  @@index([calculationId])
+  @@index([salespersonId])
+}
+
+model DirectorComment {
+  id                  String    @id @default(uuid())
+  entityType          String
+  entityId            String
+  directorId          String
+  director            User      @relation("DirectorAuthor", fields: [directorId], references: [id])
+  instruction         String
+  targetSalespersonId String?
+  targetSalesperson   User?     @relation("DirectorTargetSalesperson", fields: [targetSalespersonId], references: [id])
+  isAcknowledged      Boolean   @default(false)
+  acknowledgedAt      DateTime?
+  createdAt           DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([targetSalespersonId])
+}
+
+model DocumentAttachment {
+  id           String   @id @default(uuid())
+  entityType   String
+  entityId     String
+  fileName     String
+  fileUrl      String
+  fileType     String
+  fileSize     Int
+  uploadedById String
+  uploadedBy   User     @relation("DocumentUploadedBy", fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+model AuditEvent {
+  id         String      @id @default(uuid())
+  entityType String
+  entityId   String
+  action     AuditAction
+  actorId    String
+  actor      User        @relation("ActorAuditEvents", fields: [actorId], references: [id])
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model ImportBatch {
+  id            String   @id @default(uuid())
+  fileName      String
+  sheetType     String
+  totalRows     Int      @default(0)
+  importedCount Int      @default(0)
+  skippedCount  Int      @default(0)
+  rejectedCount Int      @default(0)
+  errors        Json?
+  importedById  String
+  importedBy    User     @relation("ImportBatchCreatedBy", fields: [importedById], references: [id])
+  createdAt     DateTime @default(now())
+
+  provenanceRows ImportRowProvenance[]
+
+  @@index([importedById])
+  @@index([createdAt])
+}
+
+model ImportRowProvenance {
+  id              String      @id @default(uuid())
+  batchId         String
+  batch           ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  sourceSheet     String
+  sourceRowNumber Int
+  rawData         Json
+  status          String
+  targetEntity    String?
+  targetId        String?
+  errorReason     String?
+  createdAt       DateTime    @default(now())
+
+  @@index([batchId])
+  @@index([sourceSheet, sourceRowNumber])
+}
+
+// Deleted records waiting in the recycle bin. The original rows are removed;
+// the snapshot holds everything needed to put them back until expiresAt.
+model RecycleBinItem {
+  id          String   @id @default(uuid())
+  entityType  String
+  entityId    String
+  label       String
+  description String?
+  clientId    String?
+  clientName  String?
+  ownerId     String? // salesperson the record belonged to, for access checks
+  snapshot    Json
+  deletedById String
+  deletedBy   User     @relation("RecycleBinDeletedBy", fields: [deletedById], references: [id])
+  deletedAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+  @@index([ownerId])
+  @@index([deletedById])
+}
+
+// One payment due on an order, from the payment stages quoted, e.g. 50% Advance with PO
+model OrderPaymentStage {
+  id              String         @id @default(uuid())
+  orderId         String
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence        Int
+  percent         Decimal        @db.Decimal(5, 2)
+  description     String
+  amount          Decimal        @db.Decimal(14, 2) // this stage's share of the order total
+  tdsAmount       Decimal        @default(0) @db.Decimal(14, 2)
+  retentionAmount Decimal        @default(0) @db.Decimal(14, 2)
+  expectedAmount  Decimal        @default(0) @db.Decimal(14, 2) // amount less this stage's TDS and retention
+  gstAmount       Decimal        @default(0) @db.Decimal(14, 2) // invoice GST asked for with this stage, on top of expectedAmount
+  dueDate         DateTime? // when the stage was raised as due; null while not yet due
+  receipts        OrderReceipt[]
+  // Replaced by receipts; kept so ticks made before receipts existed aren't lost
+  isCompleted     Boolean        @default(false)
+  completedDate   DateTime?
+  completedById   String?
+  completedBy     User?          @relation("PaymentStageCompletedBy", fields: [completedById], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([orderId, sequence])
+  @@index([orderId])
+}
+
+enum ExecutionStepStatus {
+  PENDING
+  DONE
+  NOT_APPLICABLE // step not needed for this order, e.g. no erection for spares
+}
+
+// One step in carrying out an order, e.g. Dispatched or Commissioning
+model OrderExecutionStep {
+  id            String              @id @default(uuid())
+  orderId       String
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sequence      Int
+  name          String
+  status        ExecutionStepStatus @default(PENDING)
+  completedDate DateTime?
+  updatedById   String?
+  updatedBy     User?               @relation("ExecutionStepUpdatedBy", fields: [updatedById], references: [id])
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@unique([orderId, sequence])
+  @@index([orderId])
+}
+
+// A change to an order's target delivery date, with why; the first one's previous date is the original target
+model OrderDeliveryRevision {
+  id           String    @id @default(uuid())
+  orderId      String
+  order        Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  previousDate DateTime?
+  newDate      DateTime
+  reason       String
+  revisedById  String
+  revisedBy    User      @relation(fields: [revisedById], references: [id])
+  createdAt    DateTime  @default(now())
+
+  @@index([orderId])
+}
+
+// Money actually received against an order, at one of its payment stages.
+// Receipts are never deleted: a mistake is reversed (kept, excluded from totals) or edited with an audit entry.
+model OrderReceipt {
+  id             String            @id @default(uuid())
+  orderId        String
+  order          Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentStageId String
+  paymentStage   OrderPaymentStage @relation(fields: [paymentStageId], references: [id], onDelete: Cascade)
+  amount         Decimal           @db.Decimal(14, 2)
+  receivedDate   DateTime
+  paymentMode    PaymentMode? // not known for receipts migrated from the old completed tick
+  reference      String? // UTR / cheque no.; must be unique among active receipts
+  notes          String?
+  recordedById   String
+  recordedBy     User              @relation("OrderReceiptRecordedBy", fields: [recordedById], references: [id])
+  isReversed     Boolean           @default(false)
+  reversedAt     DateTime?
+  reversalReason String?
+  reversedById   String?
+  reversedBy     User?             @relation("OrderReceiptReversedBy", fields: [reversedById], references: [id])
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([orderId])
+  @@index([paymentStageId])
+  @@index([reference])
+}
+
+// Company-wide settings a director can change, e.g. how TDS and retention are calculated
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedBy   User?    @relation("AppSettingUpdatedBy", fields: [updatedById], references: [id])
+  updatedAt   DateTime @updatedAt
+}

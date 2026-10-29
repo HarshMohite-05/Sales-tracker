@@ -1,0 +1,823 @@
+'use client';
+
+import React, { useState, useEffect, use } from 'react';
+import AppShell from '@/components/layout/AppShell';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import {
+  Building,
+  Users,
+  Phone,
+  Mail,
+  MapPin,
+  Calendar,
+  FileSpreadsheet,
+  ShoppingCart,
+  MessageSquare,
+  History,
+  Plus,
+  ArrowLeft,
+  CheckCircle,
+  Clock,
+  ShieldAlert,
+  FileText,
+  DollarSign,
+} from 'lucide-react';
+import { formatINR, formatDate, formatDateTime, humanize, stageLabel } from '@/lib/utils';
+import { normalizeClientCode } from '@/lib/clientCode';
+import { formatQuotationNumber } from '@/lib/quotation';
+import QuotationTerms from '@/components/quotations/QuotationTerms';
+import QuotationActions from '@/components/quotations/QuotationActions';
+import OrderDetails from '@/components/orders/OrderDetails';
+import OrderPayments from '@/components/orders/OrderPayments';
+import OrderExecution from '@/components/orders/OrderExecution';
+import { requirementTypeLabel } from '@/lib/requirementTypes';
+import QuotationRevisions from '@/components/quotations/QuotationRevisions';
+import LogActivityModal from '@/components/modals/LogActivityModal';
+import CreateQuotationModal from '@/components/modals/CreateQuotationModal';
+import ConvertOrderModal from '@/components/modals/ConvertOrderModal';
+import RequirementCard from '@/components/clients/RequirementCard';
+import AddRequirementModal from '@/components/modals/AddRequirementModal';
+
+export default function ClientProfilePage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
+  // ?followup=<enquiryId> opens that requirement's add-follow-up form (from the Follow-ups page)
+  const searchParams = useSearchParams();
+  const followUpEnquiryId = searchParams.get('followup');
+  // ?tab=payments opens that tab, e.g. right after an order is confirmed from the Quotations page
+  const tabParam = searchParams.get('tab');
+  const initialTab = tabParam === 'payments' || tabParam === 'execution' ? tabParam : 'overview';
+  const [client, setClient] = useState<any>(null);
+  const [directorComments, setDirectorComments] = useState<any[]>([]);
+  const [auditEvents, setAuditEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'overview' | 'enquiries' | 'activities' | 'tasks' | 'proposals' | 'orders' | 'payments' | 'execution' | 'comments' | 'audit'>(initialTab);
+
+  // Modals
+  const [showLogActivity, setShowLogActivity] = useState(false);
+  // New quotation (optionally for a given requirement) or a revision of an existing one
+  // editVersionNumber set: edit that version in place instead of revising
+  const [quoteModal, setQuoteModal] = useState<{ enquiryId?: string; quotation?: any; editVersionNumber?: number } | null>(
+    null
+  );
+  const editQuotation = (quotation: any, editVersionNumber: number) => setQuoteModal({ quotation, editVersionNumber });
+  // Requirement whose quotation is being confirmed as an order
+  const [orderFor, setOrderFor] = useState<{ quotation: any; enquiry: any } | null>(null);
+  const [showNewEnquiryModal, setShowNewEnquiryModal] = useState(false);
+
+  // Client code editing (allowed until a requirement is numbered with it)
+  const [editingCode, setEditingCode] = useState(false);
+  const [codeDraft, setCodeDraft] = useState('');
+  const [codeError, setCodeError] = useState<string | null>(null);
+
+  // Director Instruction input
+  const [directorInstruction, setDirectorInstruction] = useState('');
+  const [submittingInstruction, setSubmittingInstruction] = useState(false);
+
+  async function loadClientData() {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/clients/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setClient(data.client);
+        setDirectorComments(data.directorComments || []);
+        setAuditEvents(data.auditEvents || []);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadClientData();
+  }, [id]);
+
+  async function saveClientCode() {
+    setCodeError(null);
+    try {
+      const res = await fetch(`/api/clients/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: codeDraft }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save code');
+      setEditingCode(false);
+      loadClientData();
+    } catch (err: any) {
+      setCodeError(err.message);
+    }
+  }
+
+  async function handlePostDirectorComment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!directorInstruction.trim()) return;
+    setSubmittingInstruction(true);
+    try {
+      const res = await fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityType: 'CLIENT',
+          entityId: id,
+          instruction: directorInstruction,
+          targetSalespersonId: client.assignedToId,
+        }),
+      });
+      if (res.ok) {
+        setDirectorInstruction('');
+        loadClientData();
+      }
+    } catch {}
+    setSubmittingInstruction(false);
+  }
+
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="p-12 text-center text-xs text-slate-400">Loading client profile...</div>
+      </AppShell>
+    );
+  }
+
+  if (!client) {
+    return (
+      <AppShell>
+        <div className="p-12 text-center">
+          <p className="text-slate-600 text-sm">Client not found or unauthorized access.</p>
+          <Link href="/clients" className="mt-3 inline-block text-sky-600 font-semibold text-xs">
+            Back to Clients Directory
+          </Link>
+        </div>
+      </AppShell>
+    );
+  }
+
+  const primaryContact = client.contacts && client.contacts[0];
+
+  // Readable change-log line, e.g. "Requirement TWSPL/002 moved Quotation → Negotiation"
+  const requirementNumbers: Record<string, string> = Object.fromEntries(
+    (client.enquiries || []).map((e: any) => [e.id, e.enquiryNumber])
+  );
+  function describeChange(ae: any): string {
+    const labels: Record<string, string> = {
+      CLIENT: 'Client',
+      ENQUIRY: 'Requirement',
+      QUOTATION: 'Quotation',
+      ORDER: 'Order',
+      INVOICE: 'Invoice',
+      RECEIPT: 'Payment',
+      TASK: 'Follow-up',
+    };
+    const d = ae.details || {};
+    const label = labels[ae.entityType] || humanize(ae.entityType);
+    const ref =
+      d.enquiryNumber || d.quotationNumber || d.orderNumber || d.invoiceNumber || d.receiptNumber ||
+      (ae.entityType === 'ENQUIRY' ? requirementNumbers[ae.entityId] : '') ||
+      (ae.entityType === 'CLIENT' ? d.code || d.name : '') || '';
+    const subject = `${label}${ref ? ` ${ref}` : ''}`;
+    switch (ae.action) {
+      case 'CREATE':
+        return `${subject} created`;
+      case 'STAGE_CHANGE':
+        return `${subject} moved ${stageLabel(d.from)} → ${stageLabel(d.to)}`;
+      case 'VERIFY':
+        return `${subject} verified`;
+      case 'APPROVE':
+        return `${subject} approved`;
+      case 'REJECT':
+        return `${subject} rejected`;
+      case 'DELETE':
+        return `${subject}${d.title ? ` (${d.title})` : ''} deleted`;
+      case 'REASSIGN':
+        return `${subject} reassigned`;
+      default:
+        return `${subject} ${humanize(ae.action).toLowerCase()}`;
+    }
+  }
+  const codeInUse =
+    !!client.code && (client.enquiries || []).some((e: any) => e.enquiryNumber.startsWith(`${client.code}/`));
+
+  // Open requirements first (most recently started on top), then Won/Lost
+  const enquiries = client.enquiries || [];
+  const openEnquiries = enquiries.filter((e: any) => e.stage !== 'WON' && e.stage !== 'LOST');
+  const closedEnquiries = enquiries.filter((e: any) => e.stage === 'WON' || e.stage === 'LOST');
+
+  function renderRequirements(expanded: boolean) {
+    if (enquiries.length === 0) {
+      return <p className="text-xs text-slate-400 italic">No requirements yet.</p>;
+    }
+    return (
+      <div className="space-y-5">
+        {[
+          { label: 'Open', items: openEnquiries },
+          { label: 'Closed', items: closedEnquiries },
+        ]
+          .filter((group) => group.items.length > 0)
+          .map((group) => (
+            <div key={group.label} className="space-y-3">
+              <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                {group.label} ({group.items.length})
+              </h4>
+              {group.items.map((enq: any) => (
+                <RequirementCard
+                  key={enq.id}
+                  enquiry={enq}
+                  clientName={client.name}
+                  activities={client.activities || []}
+                  defaultExpanded={expanded}
+                  openFollowUp={enq.id === followUpEnquiryId}
+                  onChanged={loadClientData}
+                  onCreateQuotation={() => setQuoteModal({ enquiryId: enq.id })}
+                  onReviseQuotation={(quotation) => setQuoteModal({ quotation })}
+                  onEditQuotation={editQuotation}
+                />
+              ))}
+            </div>
+          ))}
+      </div>
+    );
+  }
+
+  return (
+    <AppShell>
+      <div className="space-y-5">
+        {/* Breadcrumb & Navigation */}
+        <div className="flex items-center space-x-2 text-xs text-slate-500">
+          <Link href="/clients" className="hover:text-sky-600 flex items-center space-x-1">
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Clients</span>
+          </Link>
+          <span>/</span>
+          <span className="font-semibold text-slate-800 truncate">{client.name}</span>
+        </div>
+
+        {/* Profile Hero Header Card */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div className="flex items-start space-x-4">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h1 className="text-xl font-bold text-navy-950 tracking-tight">{client.name}</h1>
+                  {editingCode ? (
+                    <span className="flex items-center space-x-1.5 text-xs">
+                      <input
+                        type="text"
+                        value={codeDraft}
+                        onChange={(e) => setCodeDraft(normalizeClientCode(e.target.value).slice(0, 10))}
+                        className="w-24 border border-slate-300 rounded-lg px-2 py-0.5 font-bold tracking-wider"
+                        autoFocus
+                      />
+                      <button onClick={saveClientCode} className="font-semibold text-sky-700">Save</button>
+                      <button onClick={() => { setEditingCode(false); setCodeError(null); }} className="font-semibold text-slate-500">
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold tracking-wider bg-navy-900 text-white">
+                      {client.code || 'No code'}
+                      {!codeInUse && (
+                        <button
+                          onClick={() => {
+                            setCodeDraft(client.code || '');
+                            setEditingCode(true);
+                          }}
+                          className="ml-2 font-semibold text-sky-300 hover:text-white"
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                    {client.industrySegment}
+                  </span>
+                </div>
+                {codeError && <p className="text-xs text-rose-600 mt-1">{codeError}</p>}
+                <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-slate-600">
+                  {primaryContact && (
+                    <span className="flex items-center space-x-1">
+                      <Users className="h-3.5 w-3.5 text-slate-400" />
+                      <span>{primaryContact.name}</span>
+                    </span>
+                  )}
+                  {primaryContact?.mobile && (
+                    <span className="flex items-center space-x-1">
+                      <Phone className="h-3.5 w-3.5 text-slate-400" />
+                      <a href={`tel:${primaryContact.mobile}`} className="hover:underline">{primaryContact.mobile}</a>
+                    </span>
+                  )}
+                  {client.city && (
+                    <span className="flex items-center space-x-1">
+                      <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                      <span>{client.city}{client.state ? `, ${client.state}` : ''}</span>
+                    </span>
+                  )}
+                  <span>Owner: <strong>{client.assignedTo?.name}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setShowLogActivity(true)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-3 py-1.5 rounded-xl transition"
+              >
+                Log Call/Visit
+              </button>
+              <button
+                onClick={() => setShowNewEnquiryModal(true)}
+                className="bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-semibold px-3 py-1.5 rounded-xl border border-sky-200 transition"
+              >
+                New Requirement
+              </button>
+              <button
+                onClick={() => setQuoteModal({})}
+                className="bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3.5 py-1.5 rounded-xl shadow-xs transition"
+              >
+                New Quotation
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Multi-Tab Navigation */}
+        <div className="border-b border-slate-200 flex space-x-6 text-xs font-bold overflow-x-auto">
+          {[
+            { key: 'overview', label: 'Overview' },
+            { key: 'enquiries', label: `Requirements (${client.enquiries?.length || 0})` },
+            { key: 'activities', label: `Activities (${client.activities?.length || 0})` },
+            { key: 'tasks', label: `Follow-ups (${client.tasks?.length || 0})` },
+            { key: 'proposals', label: `Quotations (${client.quotations?.length || 0})` },
+            { key: 'orders', label: `Orders (${client.orders?.length || 0})` },
+            { key: 'execution', label: 'Execution' },
+            { key: 'payments', label: 'Payments' },
+            { key: 'comments', label: `Notes (${directorComments.length})` },
+            { key: 'audit', label: 'Change Log' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as any)}
+              className={`pb-3 border-b-2 whitespace-nowrap transition ${
+                activeTab === tab.key
+                  ? 'border-sky-600 text-sky-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab 1: Overview */}
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-2 space-y-6">
+              {/* Requirements: each one tracked separately */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-sm text-slate-900">Requirements</h3>
+                  <button
+                    onClick={() => setShowNewEnquiryModal(true)}
+                    className="text-xs text-sky-600 hover:text-sky-800 font-semibold flex items-center space-x-1"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>New Requirement</span>
+                  </button>
+                </div>
+                {renderRequirements(false)}
+              </div>
+
+              {/* Recent Activities */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                <h3 className="font-bold text-sm text-slate-900 mb-3">Recent Activity</h3>
+                <div className="space-y-3">
+                  {client.activities?.slice(0, 3).map((act: any) => (
+                    <div key={act.id} className="p-3 border-l-2 border-sky-500 bg-slate-50/50 rounded-r-xl text-xs">
+                      <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                        <span>
+                          {formatDateTime(act.activityDate)} · {humanize(act.activityType)}
+                          {act.enquiry && <> · <strong className="text-slate-600">{act.enquiry.title}</strong></>}
+                        </span>
+                        <span>{act.salesperson.name}</span>
+                      </div>
+                      <p className="font-semibold text-slate-900 mt-1">{act.outcome}</p>
+                      <p className="text-slate-600 mt-0.5">{act.keyPoints}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: Commercial & Sites */}
+            <div className="space-y-6">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs text-xs space-y-3">
+                <h3 className="font-bold text-sm text-slate-900">Details</h3>
+                <div className="flex justify-between py-1 border-b border-slate-100">
+                  <span className="text-slate-500">GSTIN:</span>
+                  <span className="font-bold text-slate-800">{client.gstNumber || 'Not provided'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Client Type:</span>
+                  <span className="font-semibold text-slate-800">{client.clientType || 'End User'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Total Confirmed Orders:</span>
+                  <span className="font-bold text-emerald-700">{client.orders?.length || 0}</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-slate-500">Payment Pending:</span>
+                  <span className="font-bold text-amber-700">
+                    {formatINR(
+                      (client.orders || [])
+                        .flatMap((o: any) => o.payments || [])
+                        .filter((p: any) => !p.isCompleted)
+                        .reduce((sum: number, p: any) => sum + Number(p.amount), 0)
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {/* Sites & Locations */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs text-xs">
+                <h3 className="font-bold text-sm text-slate-900 mb-2">Sites</h3>
+                <div className="space-y-2">
+                  {client.sites?.map((site: any) => (
+                    <div key={site.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                      <p className="font-semibold text-slate-800">{site.siteName}</p>
+                      <p className="text-slate-500 text-[11px] mt-0.5">{site.address}, {site.city}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Requirements with full history */}
+        {activeTab === 'enquiries' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm text-slate-900">Requirements</h3>
+              <button
+                onClick={() => setShowNewEnquiryModal(true)}
+                className="bg-sky-600 text-white text-xs font-semibold px-3 py-1.5 rounded-xl shadow-xs"
+              >
+                New Requirement
+              </button>
+            </div>
+            {renderRequirements(true)}
+          </div>
+        )}
+
+        {/* Tab 3: Activities History */}
+        {activeTab === 'activities' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm text-slate-900">Activities</h3>
+              <button
+                onClick={() => setShowLogActivity(true)}
+                className="bg-sky-600 text-white text-xs font-semibold px-3 py-1.5 rounded-xl shadow-xs"
+              >
+                Log Call/Visit
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {client.activities?.map((act: any) => (
+                <div key={act.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                  <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                    <span className="font-bold text-navy-900">
+                      {humanize(act.activityType)} · {humanize(act.discussionType)}
+                      {act.enquiry && <span className="font-semibold text-slate-500"> · {act.enquiry.title}</span>}
+                    </span>
+                    <span>{formatDateTime(act.activityDate)} | By {act.salesperson.name}</span>
+                  </div>
+                  <p className="font-semibold text-slate-900 mt-1">{act.outcome}</p>
+                  <p className="text-slate-700 mt-1 leading-relaxed">{act.keyPoints}</p>
+                  {act.nextAction && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 text-[11px] text-sky-800">
+                      <strong>Next Action Scheduled:</strong> {act.nextAction} ({formatDate(act.nextActionDate)})
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 4: Follow-up Tasks */}
+        {activeTab === 'tasks' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+            <h3 className="font-bold text-sm text-slate-900">Follow-ups</h3>
+            <div className="space-y-2">
+              {client.tasks?.map((t: any) => (
+                <div key={t.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-bold text-slate-900">{t.taskNumber} - {t.description}</span>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Due <strong>{formatDateTime(t.dueDateTime)}</strong> · {t.assignedSalesperson.name}
+                    </p>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      t.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'
+                    }`}
+                  >
+                    {humanize(t.status)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 5: Proposals */}
+        {activeTab === 'proposals' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-sm text-slate-900">Quotations</h3>
+              <button
+                onClick={() => setQuoteModal({})}
+                className="bg-sky-600 text-white text-xs font-semibold px-3 py-1.5 rounded-xl shadow-xs"
+              >
+                + New Quotation
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {client.quotations?.map((q: any) => (
+                <div key={q.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-start justify-between gap-3 text-xs">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-slate-900">{formatQuotationNumber(q.quotationNumber, q.currentVersionNumber)}</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                        {humanize(q.approvalStatus)}
+                      </span>
+                    </div>
+                    {q.enquiry && (
+                      <p className="text-slate-500 mt-1">
+                        For {q.enquiry.enquiryNumber} - {q.enquiry.title}
+                      </p>
+                    )}
+                    <div className="mt-1">
+                      <QuotationTerms quotation={q} />
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Date: {formatDate(q.proposalDate)}</p>
+                    <div className="mt-1.5">
+                      <QuotationActions
+                        quotation={q}
+                        onEdit={editQuotation}
+                        onRevise={(quotation) => setQuoteModal({ quotation })}
+                        onChanged={loadClientData}
+                      />
+                    </div>
+                    <QuotationRevisions quotation={q} onEdit={editQuotation} onChanged={loadClientData} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 6: Orders */}
+        {activeTab === 'orders' && (() => {
+          // Open requirements and where each stands on the way to an order
+          const open = (client.enquiries || []).filter((e: any) => e.stage !== 'WON' && e.stage !== 'LOST');
+          const ready = open.filter((e: any) => {
+            const q = e.quotations?.[0];
+            return q && !['ACCEPTED', 'PENDING_APPROVAL', 'REJECTED'].includes(q.approvalStatus);
+          });
+          const notReady = open.filter((e: any) => !ready.includes(e));
+
+          return (
+            <div className="space-y-6">
+              {/* Requirements ready to confirm */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+                <h3 className="font-bold text-sm text-slate-900">Confirm an Order</h3>
+                {ready.length === 0 && (
+                  <p className="text-xs text-slate-400">No quoted requirement is waiting for an order.</p>
+                )}
+                {ready.map((enq: any) => {
+                  const q = enq.quotations[0];
+                  return (
+                    <div key={enq.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="text-[11px] font-bold tracking-wider text-sky-700">{enq.enquiryNumber}</span>
+                          <h4 className="font-bold text-sm text-slate-900">{enq.title}</h4>
+                          <p className="text-slate-500 mt-0.5">
+                            {requirementTypeLabel(enq)} · {stageLabel(enq.stage)} · {enq.assignedTo?.name}
+                            {Number(enq.approxValue) > 0 && <> · approx. {formatINR(enq.approxValue)}</>}
+                          </p>
+                          {enq.requirementSummary && enq.requirementSummary !== enq.title && (
+                            <p className="text-slate-600 mt-0.5">{enq.requirementSummary}</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => setOrderFor({ quotation: q, enquiry: enq })}
+                          className="shrink-0 self-start bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3.5 py-1.5 rounded-xl shadow-xs flex items-center gap-1"
+                        >
+                          <ShoppingCart className="h-3.5 w-3.5" />
+                          <span>Confirm Order</span>
+                        </button>
+                      </div>
+                      <div className="pt-2 border-t border-slate-200">
+                        <p className="font-semibold text-slate-800">
+                          Quotation {formatQuotationNumber(q.quotationNumber, q.currentVersionNumber)}
+                        </p>
+                        <QuotationTerms quotation={q} />
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {notReady.length > 0 && (
+                  <div className="pt-2 space-y-1">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Not ready for an order yet</p>
+                    {notReady.map((enq: any) => {
+                      const q = enq.quotations?.[0];
+                      return (
+                        <p key={enq.id} className="text-xs text-slate-500">
+                          <strong className="text-slate-700">{enq.enquiryNumber}</strong> {enq.title} ·{' '}
+                          {!q
+                            ? 'make a quotation first'
+                            : q.approvalStatus === 'PENDING_APPROVAL'
+                            ? 'quotation waiting for director approval'
+                            : 'quotation was rejected; revise it first'}
+                        </p>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Confirmed orders */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+                <h3 className="font-bold text-sm text-slate-900">Confirmed Orders</h3>
+                {(client.orders || []).length === 0 && <p className="text-xs text-slate-400">No orders yet.</p>}
+                {client.orders?.map((ord: any) => (
+                  <div key={ord.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <OrderDetails order={ord} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Tab 7: Execution */}
+        {activeTab === 'execution' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+            <h3 className="font-bold text-sm text-slate-900">Order Execution</h3>
+            {(client.orders || []).length === 0 && (
+              <p className="text-xs text-slate-400">No orders yet. Execution steps appear here once an order is confirmed.</p>
+            )}
+            {client.orders?.map((ord: any) => (
+              <OrderExecution key={ord.id} order={ord} onChanged={loadClientData} />
+            ))}
+          </div>
+        )}
+
+        {/* Tab 8: Payments */}
+        {activeTab === 'payments' && (
+          <div className="space-y-6">
+            {/* Payments due on each order, from its quoted payment stages */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+              <h3 className="font-bold text-sm text-slate-900">Order Payments</h3>
+              {(client.orders || []).length === 0 && (
+                <p className="text-xs text-slate-400">No orders yet. Payments appear here once an order is confirmed.</p>
+              )}
+              {client.orders?.map((ord: any) => (
+                <OrderPayments key={ord.id} order={ord} onChanged={loadClientData} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 7: Director Comments & Supervisory Instructions */}
+        {activeTab === 'comments' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+            <h3 className="font-bold text-sm text-slate-900">Director Notes</h3>
+
+            <form onSubmit={handlePostDirectorComment} className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Directors: Enter instruction or directive for responsible salesperson..."
+                value={directorInstruction}
+                onChange={(e) => setDirectorInstruction(e.target.value)}
+                className="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500"
+              />
+              <button
+                type="submit"
+                disabled={submittingInstruction}
+                className="bg-navy-900 text-white px-4 py-2 rounded-xl text-xs font-semibold hover:bg-navy-800 shadow-sm"
+              >
+                Post Instruction
+              </button>
+            </form>
+
+            <div className="space-y-3 pt-3 border-t border-slate-100">
+              {directorComments.map((dc) => (
+                <div key={dc.id} className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs">
+                  <div className="flex items-center justify-between text-amber-900 font-semibold text-[11px]">
+                    <span>Director {dc.director.name}</span>
+                    <span>{formatDateTime(dc.createdAt)}</span>
+                  </div>
+                  <p className="text-slate-800 mt-1 font-medium">{dc.instruction}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 8: Audit Trail */}
+        {activeTab === 'audit' && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 text-xs">
+            <h3 className="font-bold text-sm text-slate-900">Change Log</h3>
+            <div className="divide-y divide-slate-100">
+              {auditEvents.map((ae) => (
+                <div key={ae.id} className="py-2.5 flex items-center justify-between">
+                  <div>
+                    <span className="text-slate-800 font-medium">{describeChange(ae)}</span>
+                    <span className="text-slate-400 ml-2">by {ae.actor?.name}</span>
+                  </div>
+                  <span className="text-slate-400 text-[11px]">{formatDateTime(ae.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Log Activity Modal */}
+      {showLogActivity && (
+        <LogActivityModal
+          isOpen={showLogActivity}
+          onClose={() => setShowLogActivity(false)}
+          onSuccess={() => {
+            setShowLogActivity(false);
+            loadClientData();
+          }}
+          clientId={id}
+          clientName={client.name}
+          enquiries={client.enquiries}
+          contacts={client.contacts}
+        />
+      )}
+
+      {/* Create Quotation Modal */}
+      {quoteModal && (
+        <CreateQuotationModal
+          isOpen={!!quoteModal}
+          onClose={() => setQuoteModal(null)}
+          onSuccess={() => {
+            setQuoteModal(null);
+            loadClientData();
+          }}
+          clientId={id}
+          clientName={client.name}
+          enquiries={client.enquiries}
+          defaultEnquiryId={quoteModal.enquiryId}
+          existingQuotation={quoteModal.quotation}
+          editVersionNumber={quoteModal.editVersionNumber}
+        />
+      )}
+
+      {orderFor && (
+        <ConvertOrderModal
+          isOpen={!!orderFor}
+          onClose={() => setOrderFor(null)}
+          onSuccess={() => {
+            setOrderFor(null);
+            loadClientData();
+            // Next step after confirming: carry out the order
+            setActiveTab('execution');
+          }}
+          quotation={orderFor.quotation}
+          enquiry={orderFor.enquiry}
+          clientName={client.name}
+        />
+      )}
+
+      {/* New Requirement Modal */}
+      {showNewEnquiryModal && (
+        <AddRequirementModal
+          onClose={() => setShowNewEnquiryModal(false)}
+          onSuccess={() => {
+            setShowNewEnquiryModal(false);
+            loadClientData();
+          }}
+          clientId={id}
+          clientName={client.name}
+          contactId={primaryContact?.id}
+        />
+      )}
+    </AppShell>
+  );
+}

@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL 16 Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: nirmaan-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nirmaan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nirmaan_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-nirmaan_crm}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nirmaan -d nirmaan_crm']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Next.js Web Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nirmaan-web
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://nirmaan:nirmaan_secret@postgres:5432/nirmaan_crm?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?Set a random AUTH_SECRET of at least 32 characters}
+      TZ: Asia/Kolkata
+      NEXT_PUBLIC_TIMEZONE: Asia/Kolkata
+      SMTP_HOST: ${SMTP_HOST:-smtp.mailtrap.io}
+      SMTP_PORT: ${SMTP_PORT:-2525}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-notifications@nirmaanwater.com}
+      ENABLE_EMAIL_DISPATCH: ${ENABLE_EMAIL_DISPATCH:-false}
+      # Phone notifications (web push): generate once with `npx web-push generate-vapid-keys`
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:notifications@nirmaanwater.com}
+    ports:
+      - '3000:3000'
+
+  # 3. Background worker: follow-up alerts, morning summaries and directors' updates, every minute
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nirmaan-reminder-worker
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ['npm', 'run', 'worker']
+    environment:
+      DATABASE_URL: postgresql://nirmaan:nirmaan_secret@postgres:5432/nirmaan_crm?schema=public
+      TZ: Asia/Kolkata
+      OVERDUE_ESCALATION_HOURS: 24
+      SMTP_HOST: ${SMTP_HOST:-smtp.mailtrap.io}
+      SMTP_PORT: ${SMTP_PORT:-2525}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-notifications@nirmaanwater.com}
+      ENABLE_EMAIL_DISPATCH: ${ENABLE_EMAIL_DISPATCH:-false}
+      # Phone notifications (web push): generate once with `npx web-push generate-vapid-keys`
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:notifications@nirmaanwater.com}
+
+volumes:
+  postgres_data:
+    driver: local

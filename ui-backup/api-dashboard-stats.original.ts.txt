@@ -1,0 +1,198 @@
+import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth';
+import prisma from '@/lib/prisma';
+import { Role, OrderStatus, TaskStatus, QuotationStatus } from '@prisma/client';
+import { getIndianFYQuarter } from '@/lib/utils';
+import { reconcileOrder } from '@/lib/deductions';
+
+export async function GET(request: Request) {
+  try {
+    const user = await requireAuth();
+    const { searchParams } = new URL(request.url);
+
+    const currentFY = getIndianFYQuarter();
+    const financialYear = searchParams.get('financialYear') || currentFY.financialYear;
+    const quarter = searchParams.get('quarter') || currentFY.quarter;
+    const salespersonFilter = searchParams.get('salespersonId');
+    const industryFilter = searchParams.get('industry');
+    const categoryFilter = searchParams.get('category');
+    const stageFilter = searchParams.get('stage');
+
+    // Salesperson can only view their own records
+    const isDirector = user.role === Role.DIRECTOR;
+    const targetSpId = isDirector ? (salespersonFilter || null) : user.id;
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+
+    // 1. Follow-up Tasks Counts
+    const taskWhere: any = targetSpId ? { assignedSalespersonId: targetSpId } : {};
+    const dueTodayCount = await prisma.task.count({
+      where: {
+        ...taskWhere,
+        status: TaskStatus.PENDING,
+        dueDateTime: { gte: startOfToday, lte: endOfToday },
+      },
+    });
+
+    const overdueTasks = await prisma.task.findMany({
+      where: {
+        ...taskWhere,
+        status: TaskStatus.PENDING,
+        dueDateTime: { lt: now },
+      },
+      include: {
+        client: { select: { id: true, name: true, city: true } },
+        assignedSalesperson: { select: { id: true, name: true } },
+        enquiry: { select: { id: true, enquiryNumber: true } },
+      },
+      orderBy: { dueDateTime: 'asc' },
+      take: 10,
+    });
+
+    const upcomingTasksCount = await prisma.task.count({
+      where: {
+        ...taskWhere,
+        status: TaskStatus.PENDING,
+        dueDateTime: { gt: endOfToday },
+      },
+    });
+
+    // 2. Enquiries & Pipeline
+    const enqWhere: any = {
+      ...(targetSpId ? { assignedToId: targetSpId } : {}),
+      ...(industryFilter ? { client: { industrySegment: industryFilter } } : {}),
+      ...(categoryFilter ? { categories: { has: categoryFilter as any } } : {}),
+      ...(stageFilter ? { stage: stageFilter as any } : {}),
+    };
+
+    const openEnquiries = await prisma.enquiry.findMany({
+      where: {
+        ...enqWhere,
+        stage: { notIn: ['WON', 'LOST'] },
+      },
+      include: {
+        client: { select: { name: true, industrySegment: true } },
+        assignedTo: { select: { id: true, name: true } },
+        tasks: { where: { status: 'PENDING' }, take: 1 },
+        activities: { orderBy: { activityDate: 'desc' }, take: 1 },
+      },
+    });
+
+    const totalPipelineValue = openEnquiries.reduce((sum, e) => sum + Number(e.estimatedValue), 0);
+    const weightedPipelineValue = openEnquiries.reduce(
+      (sum, e) => sum + Math.round(Number(e.estimatedValue) * (e.probability / 100)),
+      0
+    );
+
+    // Enquiries missing next actions
+    const missingActionEnquiries = openEnquiries.filter((e) => e.tasks.length === 0 && !e.isException);
+
+    // Stalled enquiries (no activity in last 14 days)
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const stalledEnquiries = openEnquiries.filter((e) => {
+      const lastAct = e.activities[0];
+      return !lastAct || lastAct.activityDate.getTime() < fourteenDaysAgo.getTime();
+    });
+
+    // Enquiries stage distribution
+    const stageCounts: Record<string, { count: number; value: number }> = {};
+    const allEnquiries = await prisma.enquiry.findMany({
+      where: enqWhere,
+      select: { stage: true, estimatedValue: true },
+    });
+    for (const enq of allEnquiries) {
+      if (!stageCounts[enq.stage]) stageCounts[enq.stage] = { count: 0, value: 0 };
+      stageCounts[enq.stage].count += 1;
+      stageCounts[enq.stage].value += Number(enq.estimatedValue);
+    }
+
+    // 3. Quotations awaiting approval
+    const pendingQuotes = await prisma.quotation.findMany({
+      where: {
+        approvalStatus: QuotationStatus.PENDING_APPROVAL,
+        ...(targetSpId ? { salespersonId: targetSpId } : {}),
+      },
+      include: {
+        client: { select: { name: true } },
+        salesperson: { select: { name: true } },
+        enquiry: { select: { title: true } },
+      },
+      orderBy: { proposalDate: 'desc' },
+    });
+
+    // 4. Financial Metrics: orders and their payments (from the quoted payment stages)
+    const orderWhere: any = {
+      orderStatus: OrderStatus.CONFIRMED,
+      ...(targetSpId ? { assignedSalespersonId: targetSpId } : {}),
+    };
+    const orders = await prisma.order.findMany({
+      where: orderWhere,
+      select: {
+        netValue: true,
+        grossValue: true,
+        payments: { select: { id: true, amount: true, expectedAmount: true, gstAmount: true, dueDate: true } },
+        receipts: { select: { paymentStageId: true, amount: true, isReversed: true } },
+      },
+    });
+    const totalOrdersNet = orders.reduce((sum, o) => sum + Number(o.netValue), 0);
+    const totalOrdersGross = orders.reduce((sum, o) => sum + Number(o.grossValue), 0);
+
+    // Received = actual receipts; pending = what is still owed on stages raised as due (after TDS and
+    // retention, with any invoice GST); not yet due = owed on stages still waiting on execution
+    let totalPaymentsReceived = 0;
+    let totalPaymentsPending = 0;
+    let totalPaymentsNotYetDue = 0;
+    for (const o of orders) {
+      const r = reconcileOrder(o.payments, o.receipts, o);
+      totalPaymentsReceived += r.received;
+      totalPaymentsPending += r.dueNow;
+      totalPaymentsNotYetDue += r.outstanding - r.dueNow;
+    }
+
+    // 6. Quarterly Target Achievement
+    const targets = await prisma.target.findMany({
+      where: {
+        financialYear,
+        quarter: quarter as any,
+        ...(targetSpId ? { salespersonId: targetSpId } : {}),
+      },
+      include: { salesperson: { select: { name: true } } },
+    });
+
+    return NextResponse.json({
+      role: user.role,
+      user: { id: user.id, name: user.name },
+      financialYear,
+      quarter,
+      summary: {
+        dueTodayCount,
+        overdueTasksCount: overdueTasks.length,
+        upcomingTasksCount,
+        openEnquiriesCount: openEnquiries.length,
+        totalPipelineValue,
+        weightedPipelineValue,
+        missingActionCount: missingActionEnquiries.length,
+        stalledEnquiriesCount: stalledEnquiries.length,
+        pendingQuotesCount: pendingQuotes.length,
+        totalOrdersNet,
+        totalOrdersGross,
+        totalPaymentsReceived,
+        totalPaymentsPending,
+        totalPaymentsNotYetDue,
+      },
+      overdueTasks,
+      pendingQuotes,
+      missingActionEnquiries: missingActionEnquiries.slice(0, 10),
+      stalledEnquiries: stalledEnquiries.slice(0, 10),
+      stageCounts,
+      targets,
+    });
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

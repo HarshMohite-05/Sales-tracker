@@ -1,0 +1,221 @@
+// Order payment maths: TDS and retention deductions, how they spread over payment stages,
+// and reconciling money received against what is expected. Pure functions, shared by the
+// forms and the API, so the rules live in one place.
+//
+// Assumptions (documented, and configurable where the business may differ):
+// - Order total = order value including GST (equal to the value when no GST is charged).
+//   This is what the client is billed and pays against.
+// - TDS and retention are each worked out on a base a director picks in Settings:
+//     NET   = order value before GST
+//     GROSS = order total including GST
+//   Defaults: TDS on NET (CBDT Circular 23/2017: TDS excludes GST shown separately),
+//   retention on GROSS (withheld from the billed amount). Percentages are never assumed:
+//   they are entered on each order.
+// - Deductions are spread over payment stages in proportion to each stage's share of the total.
+// - TDS deducted by the client and retention withheld are not cash. They are shown separately
+//   and never counted as received or as outstanding.
+// - Quoted prices carry no GST. GST is charged once, on the invoice, raised at one execution step:
+//   the GST % entered then, on the order value before GST (none when the order value already
+//   includes GST). It is asked for in full with one payment stage, with no TDS or retention on it.
+// - Anything received above what a stage expects is taken to be GST paid on top of the quoted
+//   price, and its rate is shown as a percentage of the stage value before GST.
+
+export type DeductionBase = 'NET' | 'GROSS';
+
+export const DEDUCTION_BASE_OPTIONS: { value: DeductionBase; label: string }[] = [
+  { value: 'NET', label: 'Order value before GST' },
+  { value: 'GROSS', label: 'Order total including GST' },
+];
+
+export interface DeductionRules {
+  tdsBase: DeductionBase;
+  retentionBase: DeductionBase;
+}
+
+export const DEFAULT_DEDUCTION_RULES: DeductionRules = { tdsBase: 'NET', retentionBase: 'GROSS' };
+
+export interface DeductionInput {
+  netValue: number; // before GST
+  gstValue: number;
+  tdsEnabled: boolean;
+  tdsPercent: number;
+  retentionEnabled: boolean;
+  retentionPercent: number;
+  rules: DeductionRules;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Check a deduction percentage typed into a form. Disabled deductions are always zero.
+ */
+export function deductionPercentError(label: string, enabled: boolean, percent: unknown): string | null {
+  if (!enabled) return null;
+  const p = Number(percent);
+  if (percent === '' || percent === null || percent === undefined || Number.isNaN(p)) return `Enter the ${label} percentage`;
+  if (p <= 0 || p >= 100) return `${label} percentage must be more than 0 and less than 100`;
+  return null;
+}
+
+/**
+ * Check the retention due date: required when retention is applied. Returns the date or an error.
+ */
+export function parseRetentionDueDate(enabled: boolean, value: unknown): { date: Date | null } | { error: string } {
+  if (!enabled) return { date: null };
+  const date = value ? new Date(String(value)) : null;
+  if (!date || Number.isNaN(date.getTime())) return { error: 'Select the date the retention amount is to be received' };
+  return { date };
+}
+
+/**
+ * Order total, TDS, retention and the payment expected after them.
+ */
+export function calculateDeductions(input: DeductionInput) {
+  const net = round2(input.netValue);
+  const gst = round2(input.gstValue);
+  const total = round2(net + gst);
+  const baseOf = (b: DeductionBase) => (b === 'GROSS' ? total : net);
+
+  const tdsPercent = input.tdsEnabled ? input.tdsPercent : 0;
+  const retentionPercent = input.retentionEnabled ? input.retentionPercent : 0;
+  const tdsAmount = round2((baseOf(input.rules.tdsBase) * tdsPercent) / 100);
+  const retentionAmount = round2((baseOf(input.rules.retentionBase) * retentionPercent) / 100);
+
+  return {
+    netValue: net,
+    gstValue: gst,
+    total,
+    tdsPercent,
+    tdsAmount,
+    retentionPercent,
+    retentionAmount,
+    expectedPayment: round2(total - tdsAmount - retentionAmount),
+  };
+}
+
+/**
+ * Split an order's total and deductions over its payment stages by percentage.
+ * The last stage takes any rounding, so every column adds up to the order exactly.
+ */
+export function splitOverStages(
+  stages: { percent: number; description: string }[],
+  totals: { total: number; tdsAmount: number; retentionAmount: number }
+) {
+  const list = stages.length > 0 ? stages : [{ percent: 100, description: 'Full payment' }];
+  const used = { amount: 0, tds: 0, retention: 0 };
+
+  return list.map((s, i) => {
+    const last = i === list.length - 1;
+    const share = (whole: number, key: keyof typeof used) => {
+      const value = last ? round2(whole - used[key]) : round2((whole * s.percent) / 100);
+      used[key] = round2(used[key] + value);
+      return value;
+    };
+    const amount = share(totals.total, 'amount');
+    const tdsAmount = share(totals.tdsAmount, 'tds');
+    const retentionAmount = share(totals.retentionAmount, 'retention');
+    return {
+      sequence: i + 1,
+      percent: s.percent,
+      description: s.description || `Payment ${i + 1}`,
+      amount,
+      tdsAmount,
+      retentionAmount,
+      expectedAmount: round2(amount - tdsAmount - retentionAmount),
+    };
+  });
+}
+
+export type PaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'FULLY_PAID' | 'OVERPAID';
+
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  UNPAID: 'Unpaid',
+  PARTIALLY_PAID: 'Partially Paid',
+  FULLY_PAID: 'Fully Paid',
+  OVERPAID: 'Paid + GST',
+};
+
+/**
+ * Compare money received with what was expected.
+ * Outstanding = MAX(expected − received, 0); Excess = MAX(received − expected, 0).
+ */
+export function reconcile(expected: number, received: number) {
+  const exp = round2(expected);
+  const rec = round2(received);
+  const outstanding = round2(Math.max(exp - rec, 0));
+  const excess = round2(Math.max(rec - exp, 0));
+  const status: PaymentStatus =
+    rec <= 0 ? 'UNPAID' : excess > 0 ? 'OVERPAID' : outstanding > 0 ? 'PARTIALLY_PAID' : 'FULLY_PAID';
+  return { expected: exp, received: rec, outstanding, excess, status };
+}
+
+/**
+ * GST charged on the invoice: the percentage of the order value before GST, or nothing when the
+ * order value already includes GST.
+ */
+export function invoiceGstAmount(order: { netValue: unknown; taxValue: unknown }, gstPercent: number) {
+  if (Number(order.taxValue) > 0) return 0;
+  return round2((Number(order.netValue) * gstPercent) / 100);
+}
+
+/**
+ * Sum of receipts that count: reversed receipts stay in the history but not in the totals.
+ */
+export function receivedTotal(receipts: { amount: unknown; isReversed?: boolean }[]): number {
+  return round2(receipts.filter((r) => !r.isReversed).reduce((sum, r) => sum + Number(r.amount), 0));
+}
+
+/**
+ * Money received above what was expected, read as GST paid on top of the quoted price.
+ * The rate is that GST as a percentage of the value it was paid on (the order or stage value before GST).
+ */
+export function excessAsGst(excess: number, valueBeforeGst: number) {
+  const gstAmount = round2(Math.max(excess, 0));
+  const gstPercent = valueBeforeGst > 0 ? round2((gstAmount / valueBeforeGst) * 100) : 0;
+  return { gstAmount, gstPercent };
+}
+
+/**
+ * Reconcile an order stage by stage. A stage paid above its expected amount (GST on top) does not
+ * cover another stage that was paid short: the order's outstanding is the sum of each stage's
+ * shortfall, and its GST the sum of each stage's extra.
+ */
+export function reconcileOrder(
+  stages: { id: string; amount: unknown; expectedAmount: unknown; gstAmount?: unknown; dueDate?: unknown }[],
+  receipts: { paymentStageId: string; amount: unknown; isReversed?: boolean }[],
+  order: { netValue: unknown; grossValue: unknown }
+) {
+  const net = Number(order.netValue);
+  const gross = Number(order.grossValue);
+
+  const rows = stages.map((st) => {
+    // Invoice GST asked with this stage is expected on top of its amount
+    const invoiceGst = round2(Number(st.gstAmount ?? 0));
+    const r = reconcile(Number(st.expectedAmount) + invoiceGst, receivedTotal(receipts.filter((x) => x.paymentStageId === st.id)));
+    // The stage's own value before GST, for the rate of any GST paid on it
+    const valueBeforeGst = gross > 0 ? round2((Number(st.amount) * net) / gross) : 0;
+    return { stageId: st.id, ...r, invoiceGst, isDue: !!st.dueDate, valueBeforeGst, gst: excessAsGst(r.excess, valueBeforeGst) };
+  });
+
+  const sum = (pick: (r: (typeof rows)[number]) => number) => round2(rows.reduce((s, r) => s + pick(r), 0));
+  const expected = sum((r) => r.expected);
+  const received = sum((r) => r.received);
+  const outstanding = sum((r) => r.outstanding);
+  // Owed on stages already raised as due; the rest of the outstanding is not yet due
+  const dueNow = sum((r) => (r.isDue ? r.outstanding : 0));
+  const excess = sum((r) => r.excess);
+  const status: PaymentStatus =
+    received <= 0 ? 'UNPAID' : outstanding > 0 ? 'PARTIALLY_PAID' : excess > 0 ? 'OVERPAID' : 'FULLY_PAID';
+
+  return {
+    rows,
+    expected,
+    received,
+    outstanding,
+    dueNow,
+    excess,
+    status,
+    // GST rate over the stages it was paid on
+    gst: excessAsGst(excess, sum((r) => (r.excess > 0 ? r.valueBeforeGst : 0))),
+  };
+}

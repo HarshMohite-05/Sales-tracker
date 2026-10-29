@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+backups/
+
+# local data and test output (personal data, screenshots, run logs)
+*.xlsx
+!public/**/*.xlsx
+qa/evidence/
+run-results.txt
+wipe-results.txt
+uploads/

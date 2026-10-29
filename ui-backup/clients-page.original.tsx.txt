@@ -1,0 +1,231 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import AppShell from '@/components/layout/AppShell';
+import Link from 'next/link';
+import {
+  Users,
+  Search,
+  Plus,
+  Building,
+  Phone,
+  Mail,
+  MapPin,
+  ExternalLink,
+  ChevronRight,
+  Filter,
+} from 'lucide-react';
+import AddClientModal from '@/components/modals/AddClientModal';
+import { formatINR, humanize, stageLabel } from '@/lib/utils';
+import { DEFAULT_INDUSTRY_SEGMENTS } from '@/lib/industries';
+
+export default function ClientsPage() {
+  const [clients, setClients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [industry, setIndustry] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [userRole, setUserRole] = useState<'DIRECTOR' | 'SALESPERSON'>('SALESPERSON');
+  const [userId, setUserId] = useState('');
+  const [industryOptions, setIndustryOptions] = useState<string[]>(DEFAULT_INDUSTRY_SEGMENTS);
+
+  async function loadIndustries() {
+    try {
+      const res = await fetch('/api/clients/industries');
+      if (res.ok) {
+        const data = await res.json();
+        setIndustryOptions(data.industries || DEFAULT_INDUSTRY_SEGMENTS);
+      }
+    } catch {}
+  }
+
+  useEffect(() => {
+    loadIndustries();
+  }, []);
+
+  async function loadClients() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        ...(search ? { search } : {}),
+        ...(industry ? { industry } : {}),
+      });
+
+      const res = await fetch(`/api/clients?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setClients(data.clients || []);
+      }
+
+      const meRes = await fetch('/api/auth/me');
+      if (meRes.ok) {
+        const meData = await meRes.json();
+        setUserRole(meData.user.role);
+        setUserId(meData.user.id);
+      }
+    } catch {}
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadClients();
+  }, [industry]);
+
+  // Reload when a client is added from the sidebar
+  useEffect(() => {
+    const reload = () => {
+      loadClients();
+      loadIndustries();
+    };
+    window.addEventListener('crm:data-changed', reload);
+    return () => window.removeEventListener('crm:data-changed', reload);
+  });
+
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    loadClients();
+  }
+
+  return (
+    <AppShell>
+      <div className="space-y-5">
+        {/* Page Title & Actions */}
+        <h1 className="text-xl font-bold text-slate-900 tracking-tight">Clients</h1>
+
+        {/* Search & Filter Bar */}
+        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row gap-3">
+          <form onSubmit={handleSearch} className="flex-1 relative">
+            <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              placeholder="Search name, contact, mobile or city"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+          </form>
+
+          <div className="flex items-center space-x-2">
+            <Filter className="h-4 w-4 text-slate-400" />
+            <select
+              value={industry}
+              onChange={(e) => setIndustry(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-700 font-medium"
+            >
+              <option value="">All Industries</option>
+              {industryOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Clients Grid / List */}
+        {loading ? (
+          <div className="p-12 text-center text-xs text-slate-400">Loading...</div>
+        ) : clients.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+            <Building className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+            <h3 className="font-bold text-slate-800 text-sm">No clients found</h3>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="mt-4 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-4 py-2 rounded-xl"
+            >
+              Add Client
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {clients.map((client) => {
+              const primaryContact = client.contacts && client.contacts[0];
+
+              return (
+                <Link
+                  key={client.id}
+                  href={`/clients/${client.id}`}
+                  className="bg-white rounded-2xl border border-slate-200 hover:border-sky-300 shadow-xs hover:shadow-md transition p-5 flex flex-col justify-between"
+                >
+                  <div>
+                    {/* Header */}
+                    <div className="min-w-0">
+                      <span className="font-bold text-sm text-navy-950 block truncate">
+                        {client.name}
+                        {client.code && <span className="ml-1.5 text-[11px] font-bold tracking-wider text-sky-700">{client.code}</span>}
+                      </span>
+                      <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700 mt-1">
+                        {client.industrySegment}
+                      </span>
+                    </div>
+
+                    {/* Contact & Location info */}
+                    <div className="mt-3.5 space-y-1.5 text-xs text-slate-600">
+                      {primaryContact && (
+                        <div className="flex items-center space-x-2">
+                          <Users className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate">{primaryContact.name}</span>
+                        </div>
+                      )}
+                      {primaryContact?.mobile && (
+                        <div className="flex items-center space-x-2">
+                          <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          <span className="text-slate-700 font-medium">{primaryContact.mobile}</span>
+                        </div>
+                      )}
+                      {client.city && (
+                        <div className="flex items-center space-x-2">
+                          <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          <span className="truncate">{client.city}{client.state ? `, ${client.state}` : ''}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Latest Enquiries */}
+                    {client.enquiries && client.enquiries.length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <div className="space-y-1">
+                          {client.enquiries.slice(0, 2).map((enq: any) => (
+                            <div
+                              key={enq.id}
+                              className="text-[11px] bg-slate-50 p-1.5 rounded-lg border border-slate-100 flex items-center justify-between"
+                            >
+                              <span className="font-medium text-slate-800 truncate mr-2">{enq.title}</span>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0">
+                                {stageLabel(enq.stage)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card Footer */}
+                  <div className="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
+                    {client.assignedTo?.name || 'Unassigned'}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {showAddModal && (
+        <AddClientModal
+          isOpen={showAddModal}
+          onClose={() => setShowAddModal(false)}
+          onSuccess={() => {
+            setShowAddModal(false);
+            loadClients();
+            loadIndustries();
+          }}
+          currentUserRole={userRole}
+          currentUserId={userId}
+        />
+      )}
+    </AppShell>
+  );
+}
