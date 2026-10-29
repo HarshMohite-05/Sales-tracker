@@ -185,7 +185,7 @@ export default function AppShell({ children, theme = 'light' }: AppShellProps) {
       {/* Mobile Top Header */}
       <div className="md:hidden bg-navy-900 text-white p-4 flex items-center justify-between shadow-md sticky top-0 z-40">
         <div className="flex items-center space-x-2">
-          <img src="/logo.png" alt="Nirmaan Watertech Solutions" width="1200" height="586" className="h-10 w-[82px] rounded-lg bg-white object-contain px-1" />
+          <img src="/logo-dark.png" alt="Nirmaan Watertech Solutions" width="1200" height="586" className="h-10 w-[82px] object-contain" />
           <span className="font-bold text-base tracking-wide">Sales Tracker</span>
         </div>
         <div className="flex items-center space-x-3">
@@ -212,7 +212,7 @@ export default function AppShell({ children, theme = 'light' }: AppShellProps) {
       <aside id="sidebar-navigation" aria-label="Main navigation" className={`fixed inset-y-0 left-0 z-50 flex h-dvh w-72 shrink-0 flex-col border-r border-white/5 bg-gradient-to-b from-[#0c1930] to-[#081221] text-slate-200 transition-[width,transform] duration-200 md:sticky md:top-0 md:translate-x-0 ${sidebarCollapsed ? 'md:w-20' : 'md:w-64'} ${mobileMenuOpen ? 'visible translate-x-0' : 'invisible -translate-x-full md:visible'}`}>
         <div className={`flex items-center gap-2 border-b border-white/5 p-5 ${sidebarCollapsed ? 'md:flex-col md:px-2 md:py-4' : ''}`}>
           <Link href="/dashboard" title="Sales Tracker home" className="flex min-w-0 flex-1 items-center gap-2.5">
-            <span className={`flex h-11 shrink-0 items-center justify-center ${sidebarCollapsed ? 'w-12' : 'w-[72px]'}`}><img src="/logo.png" alt="Nirmaan Watertech Solutions" width="1200" height="586" className="h-auto max-h-full w-full rounded-lg bg-white object-contain p-0.5" /></span>
+            <span className={`flex h-11 shrink-0 items-center justify-center ${sidebarCollapsed ? 'w-12' : 'w-[72px]'}`}><img src="/logo-dark.png" alt="Nirmaan Watertech Solutions" width="1200" height="586" className="h-auto max-h-full w-full object-contain" /></span>
             <span className={sidebarCollapsed ? 'md:hidden' : ''}><span className="block text-sm font-bold tracking-wide text-white">Sales Tracker</span><span className="mt-0.5 block text-[10px] tracking-wider text-slate-400">{user?.role === 'DIRECTOR' ? 'COMPANY WORKSPACE' : 'SALES WORKSPACE'}</span></span>
           </Link>
           <button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed} className="hidden rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white focus-visible:outline-sky-400 md:inline-flex">{sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}</button>
