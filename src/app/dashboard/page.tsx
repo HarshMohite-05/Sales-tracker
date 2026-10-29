@@ -39,6 +39,7 @@ import RecordSearch from '@/components/ui/RecordSearch';
 import { EMPTY_FILTERS, RecordFilters } from '@/lib/recordFilters';
 import { Funnel, Gauge, Sparkline, StatusDonut, TrendChart } from '@/components/dashboard/Charts';
 import RegisterTable, { EMPTY_REGISTER_STATE, RegisterColumn, RegisterConfig, RegisterState } from '@/components/dashboard/RegisterTable';
+import PeriodPicker, { PeriodChoice, periodDates } from '@/components/dashboard/PeriodPicker';
 
 function greeting() {
   const hour = Number(
@@ -89,6 +90,9 @@ export default function DashboardPage() {
   const [viewAs, setViewAs] = useState('');
   // Directors: one office (Mumbai, Ahmedabad) or both
   const [officeId, setOfficeId] = useState('');
+  // The period leads, orders and payments received are counted in: this financial year unless another is chosen
+  const [period, setPeriod] = useState<PeriodChoice>({ preset: 'thisFY' });
+  const dates = periodDates(period);
   const detail = view?.key ?? null;
   useEffect(() => {
     try {
@@ -97,6 +101,7 @@ export default function DashboardPage() {
         setView(saved.view ?? null);
         setViewAs(saved.viewAs || '');
         setOfficeId(saved.officeId || '');
+        if (saved.period?.preset) setPeriod(saved.period);
         setRegister({ ...EMPTY_REGISTER_STATE, ...saved.register });
         if (saved.recordFilters) {
           setRecordFilters(saved.recordFilters);
@@ -109,9 +114,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!restored) return;
     try {
-      sessionStorage.setItem(VIEW_STORE, JSON.stringify({ view, register, recordFilters, viewAs, officeId }));
+      sessionStorage.setItem(VIEW_STORE, JSON.stringify({ view, register, recordFilters, viewAs, officeId, period }));
     } catch {}
-  }, [restored, view, register, recordFilters, viewAs, officeId]);
+  }, [restored, view, register, recordFilters, viewAs, officeId, period]);
   function showDetail(key: DetailKey, preset?: Preset) {
     const same = view?.key === key && JSON.stringify(view?.preset) === JSON.stringify(preset);
     setView(same ? null : { key, preset });
@@ -138,6 +143,10 @@ export default function DashboardPage() {
       });
       if (viewAs) params.set('salespersonId', viewAs);
       if (officeId) params.set('officeId', officeId);
+      if (dates) {
+        params.set('from', dates.from);
+        params.set('to', dates.to);
+      }
       const res = await fetch(`/api/dashboard/stats?${params.toString()}`);
       const data = await res.json();
       if (requestId !== dashboardRequest.current) return;
@@ -154,7 +163,7 @@ export default function DashboardPage() {
     // Reload when a client is added from the sidebar
     window.addEventListener('crm:data-changed', loadDashboard);
     return () => window.removeEventListener('crm:data-changed', loadDashboard);
-  }, [financialYear, quarter, appliedFilters, viewAs, officeId]);
+  }, [financialYear, quarter, appliedFilters, viewAs, officeId, dates?.from, dates?.to]);
 
   const isDirector = stats?.role === 'DIRECTOR';
   // A director looking at one salesperson's dashboard, or at the whole team
@@ -173,23 +182,6 @@ export default function DashboardPage() {
   const outstanding = Number(summary.totalOutstanding || 0);
   const delivery = summary.delivery;
   const firstName = userName.split(' ')[0];
-
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const fmtDay = (d: Date) =>
-    new Intl.DateTimeFormat('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      timeZone: TIMEZONE,
-    }).format(d);
-  // The range's start without the year, which the end already shows
-  const fmtDayShort = (d: Date) =>
-    new Intl.DateTimeFormat('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      timeZone: TIMEZONE,
-    }).format(d);
 
   return (
     <AppShell theme="dark">
@@ -227,13 +219,7 @@ export default function DashboardPage() {
             </div>
           )}
           <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-2 text-[var(--text-primary)]">
-              <CalendarDays className="h-4 w-4 text-[var(--text-secondary)]" />
-              {fmtDayShort(monthStart)} – {fmtDay(now)}
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-2 text-[var(--text-secondary)]">
-              {financialYear} · {quarter}
-            </span>
+            <PeriodPicker value={period} onChange={setPeriod} />
             <button
               type="button"
               onClick={() => setShowFilters((v) => !v)}
@@ -417,7 +403,7 @@ export default function DashboardPage() {
             icon={Users}
             label="Total Leads"
             value={String(kpis?.leads.total ?? 0)}
-            note={kpis ? `+${kpis.leads.thisMonth} this month` : ''}
+            note={kpis ? (dates ? `${kpis.leads.thisMonth} previous period` : `+${kpis.leads.thisMonth} this month`) : ''}
             loading={firstLoad}
           />
           <Kpi
@@ -426,7 +412,7 @@ export default function DashboardPage() {
             icon={BarChart3}
             label="Total Enquiry Generated"
             value={formatINRCompact(kpis?.enquiryValue.total)}
-            note={kpis ? `${formatINRCompact(kpis.enquiryValue.thisMonth)} this month` : ''}
+            note={kpis ? `${formatINRCompact(kpis.enquiryValue.thisMonth)} ${dates ? 'previous period' : 'this month'}` : ''}
             loading={firstLoad}
           />
           <Kpi
@@ -452,7 +438,7 @@ export default function DashboardPage() {
             label="Orders Booked"
             value={formatINRCompact(kpis?.orders.value)}
             second={`${kpis?.orders.count ?? 0} orders`}
-            note={kpis ? `+${kpis.orders.thisMonth} this month` : ''}
+            note={kpis ? (dates ? `${kpis.orders.thisMonth} orders previous period` : `+${kpis.orders.thisMonth} this month`) : ''}
             loading={firstLoad}
           />
           <Kpi
@@ -518,7 +504,7 @@ export default function DashboardPage() {
             tone="green"
             label="Payment Received"
             value={formatINRCompact(summary.totalPaymentsReceived)}
-            note={kpis ? `${formatINRCompact(kpis.received.now)} this month` : ''}
+            note={kpis ? (dates ? `${formatINRCompact(kpis.received.before)} previous period` : `${formatINRCompact(kpis.received.now)} this month`) : ''}
             spark={last6('received')}
             loading={firstLoad}
           />

@@ -23,6 +23,17 @@ export async function GET(request: Request) {
     const quarter = searchParams.get('quarter') || currentFY.quarter;
     const salespersonFilter = searchParams.get('salespersonId');
     const officeFilter = searchParams.get('officeId');
+    // The period (India days, YYYY-MM-DD): leads created, orders booked and payments received in it are
+    // counted, and compared with the period of the same length just before. Without one, all time.
+    // Follow-ups, money owed now, execution and approvals are always as of today.
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
+    const isDay = (v: string | null) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const range = isDay(fromParam) && isDay(toParam) ? { start: new Date(`${fromParam}T00:00:00+05:30`), end: new Date(`${toParam}T23:59:59.999+05:30`) } : null;
+    if (range && range.start > range.end) return NextResponse.json({ error: 'The period must start before it ends' }, { status: 400 });
+    const previous = range ? { start: new Date(2 * range.start.getTime() - range.end.getTime() - 1), end: new Date(range.start.getTime() - 1) } : null;
+    const inPeriod = (d: Date | null | undefined) => !range || (!!d && d >= range.start && d <= range.end);
+    const inPrevious = (d: Date | null | undefined) => !!previous && !!d && d >= previous.start && d <= previous.end;
     const industryFilter = searchParams.get('industry');
     const categoryFilter = searchParams.get('category');
     const stageFilter = searchParams.get('stage');
@@ -113,7 +124,8 @@ export async function GET(request: Request) {
       },
       orderBy: { createdAt: 'desc' },
     });
-    const allEnquiries = enquiryCandidates.filter((e) => matches(e, 'Requirement'));
+    const matchedEnquiries = enquiryCandidates.filter((e) => matches(e, 'Requirement'));
+    const allEnquiries = matchedEnquiries.filter((e) => inPeriod(e.createdAt));
     const openEnquiries = allEnquiries.filter((e) => e.stage !== 'WON' && e.stage !== 'LOST');
 
     const totalPipelineValue = openEnquiries.reduce((sum, e) => sum + Number(e.estimatedValue), 0);
@@ -191,9 +203,11 @@ export async function GET(request: Request) {
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+    // Every order, for money owed and execution (as of today); the ones booked in the period for bookings
     const orders = orderCandidates.filter((order) => matches(order, 'Order'));
-    const totalOrdersNet = orders.reduce((sum, o) => sum + Number(o.netValue), 0);
-    const totalOrdersGross = orders.reduce((sum, o) => sum + Number(o.grossValue), 0);
+    const bookedOrders = orders.filter((o) => inPeriod(o.orderDate));
+    const totalOrdersNet = bookedOrders.reduce((sum, o) => sum + Number(o.netValue), 0);
+    const totalOrdersGross = bookedOrders.reduce((sum, o) => sum + Number(o.grossValue), 0);
 
     // Received = receipts that count; outstanding (= due now) = raised as due − received on it;
     // not yet due = balance on stages not raised yet; underpayment = the part of the outstanding on
@@ -206,6 +220,9 @@ export async function GET(request: Request) {
     let totalUnderpayment = 0;
     let totalOverpayment = 0;
     let totalRetentionWithheld = 0;
+    // Payments received in the period, and in the period before it
+    let receivedInPeriod = 0;
+    let receivedBefore = 0;
     let retentionOverdue = 0;
     const collections: any[] = [];
     const receiptRows: any[] = [];
@@ -243,6 +260,10 @@ export async function GET(request: Request) {
       });
       for (const rc of o.receipts) {
         if (rc.isReversed) continue;
+        const receivedOn = rc.receivedDate ?? rc.createdAt;
+        if (inPrevious(receivedOn)) receivedBefore += Number(rc.amount);
+        if (!inPeriod(receivedOn)) continue;
+        receivedInPeriod += Number(rc.amount);
         const stage = o.payments.find((p) => p.id === rc.paymentStageId);
         receiptRows.push({
           orderId: o.id,
@@ -329,7 +350,7 @@ export async function GET(request: Request) {
     }
     // Oldest first: the longest-waiting money is chased first
     collections.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-    totalPaymentsReceived = r2(totalPaymentsReceived);
+    totalPaymentsReceived = r2(range ? receivedInPeriod : totalPaymentsReceived);
     totalOutstanding = r2(totalOutstanding);
     totalPaymentsPending = r2(totalPaymentsPending);
     totalUnderpayment = r2(totalUnderpayment);
@@ -386,26 +407,37 @@ export async function GET(request: Request) {
       new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE, year: 'numeric', month: '2-digit' }).format(d).slice(0, 7);
     const nowKey = monthKey(now);
     const [nowYear, nowMonth] = nowKey.split('-').map(Number);
-    const months = Array.from({ length: 10 }, (_, i) => {
-      const d = new Date(Date.UTC(nowYear, nowMonth - 1 - (9 - i), 15));
+    // The last 10 months, or the months of the chosen period (at most the last 24 of it)
+    const [endYear, endMonth] = (range ? monthKey(range.end) : nowKey).split('-').map(Number);
+    const [startYear, startMonth] = range ? monthKey(range.start).split('-').map(Number) : [endYear, endMonth - 9];
+    const monthCount = range ? Math.min(24, Math.max(1, (endYear - startYear) * 12 + endMonth - startMonth + 1)) : 10;
+    const months = Array.from({ length: monthCount }, (_, i) => {
+      const d = new Date(Date.UTC(endYear, endMonth - 1 - (monthCount - 1 - i), 15));
       return { key: monthKey(d), label: new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: TIMEZONE }).format(d) };
     });
-    const lastKey = months[8].key;
+    const lastKey = months[Math.max(0, monthCount - 2)].key;
     const monthly = months.map((m) => ({ ...m, enquiries: 0, orders: 0, orderValue: 0, received: 0 }));
     const bucket = (d: Date | null) => (d ? monthly.find((m) => m.key === monthKey(d)) : undefined);
     for (const e of allEnquiries) { const m = bucket(e.createdAt); if (m) m.enquiries += 1; }
     for (const o of orders) {
-      const m = bucket(o.orderDate);
+      const m = inPeriod(o.orderDate) ? bucket(o.orderDate) : undefined;
       if (m) { m.orders += 1; m.orderValue += Number(o.netValue); }
       for (const rc of o.receipts) {
-        if (rc.isReversed) continue;
+        if (rc.isReversed || !inPeriod(rc.receivedDate ?? rc.createdAt)) continue;
         const mr = bucket(rc.receivedDate ?? rc.createdAt);
         if (mr) mr.received += Number(rc.amount);
       }
     }
     for (const m of monthly) { m.orderValue = r2(m.orderValue); m.received = r2(m.received); }
-    const thisMonth = monthly[9];
-    const lastMonth = monthly[8];
+    // Comparisons: this month against last month, or the chosen period against the one before it
+    const sum = (list: { netValue: unknown }[]) => r2(list.reduce((t, o) => t + Number(o.netValue), 0));
+    const ordersBefore = orders.filter((o) => inPrevious(o.orderDate));
+    const thisMonth = range
+      ? { enquiries: allEnquiries.length, orders: bookedOrders.length, orderValue: sum(bookedOrders), received: r2(receivedInPeriod) }
+      : monthly[monthCount - 1];
+    const lastMonth = range
+      ? { enquiries: matchedEnquiries.filter((e) => inPrevious(e.createdAt)).length, orders: ordersBefore.length, orderValue: sum(ordersBefore), received: r2(receivedBefore) }
+      : monthly[monthCount - 2];
 
     // Follow-ups due yesterday (any status), to compare with today
     const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
@@ -445,7 +477,7 @@ export async function GET(request: Request) {
             },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           })
-        ).filter((order) => matches(order, 'Order'))
+        ).filter((order) => matches(order, 'Order') && inPeriod(order.orderDate))
       : [];
     // Each status with its orders' count and net value
     const statusRow = (key: string, label: string, list: { netValue: unknown }[], count = list.length) => ({
@@ -455,10 +487,10 @@ export async function GET(request: Request) {
       value: r2(list.reduce((sum, o) => sum + Number(o.netValue), 0)),
     });
     const orderStatus = [
-      statusRow('COMPLETED', 'Completed', orders.filter((o) => o.orderStatus === 'COMPLETED')),
-      statusRow('IN_PROGRESS', 'In execution', orders.filter((o) => o.orderStatus === 'IN_EXECUTION' || o.orderStatus === 'DISPATCHED')),
-      statusRow('CONFIRMED', 'Not started', orders.filter((o) => o.orderStatus === 'CONFIRMED')),
-      statusRow('CANCELLED', 'Cancelled', cancelledOrders, cancelledCount),
+      statusRow('COMPLETED', 'Completed', bookedOrders.filter((o) => o.orderStatus === 'COMPLETED')),
+      statusRow('IN_PROGRESS', 'In execution', bookedOrders.filter((o) => o.orderStatus === 'IN_EXECUTION' || o.orderStatus === 'DISPATCHED')),
+      statusRow('CONFIRMED', 'Not started', bookedOrders.filter((o) => o.orderStatus === 'CONFIRMED')),
+      statusRow('CANCELLED', 'Cancelled', cancelledOrders, range ? cancelledOrders.length : cancelledCount),
     ];
 
     // Order target: per salesperson, the running ORDERS_BOOKED target with the shortest period (the most
@@ -481,10 +513,10 @@ export async function GET(request: Request) {
       daysLeft: periodEnd ? Math.max(0, Math.ceil((periodEnd - now.getTime()) / 86400000)) : 0,
     };
 
-    // Best order value this month by salesperson (directors' Top performer)
+    // Best order value this month (or in the chosen period) by salesperson (directors' Top performer)
     const bySalesperson = new Map<string, { name: string; value: number; count: number }>();
     for (const o of orders) {
-      if (monthKey(o.orderDate) !== nowKey) continue;
+      if (range ? !inPeriod(o.orderDate) : monthKey(o.orderDate) !== nowKey) continue;
       const row = bySalesperson.get(o.assignedSalesperson.name) || { name: o.assignedSalesperson.name, value: 0, count: 0 };
       row.value += Number(o.netValue);
       row.count += 1;
@@ -502,23 +534,27 @@ export async function GET(request: Request) {
         avgOrder: {
           now: thisMonth.orders ? r2(thisMonth.orderValue / thisMonth.orders) : 0,
           before: lastMonth.orders ? r2(lastMonth.orderValue / lastMonth.orders) : 0,
-          overall: orders.length ? r2(totalOrdersNet / orders.length) : 0,
+          overall: bookedOrders.length ? r2(totalOrdersNet / bookedOrders.length) : 0,
         },
         conversion: { won: wonCount, total: allEnquiries.length },
         // Leads are requirements; a requirement's value is its quoted (or approximate) value
-        leads: { total: allEnquiries.length, thisMonth: thisMonth.enquiries },
+        // thisMonth fields: this month's figure, or with a period chosen the previous period's (see recentLabel)
+        leads: { total: allEnquiries.length, thisMonth: range ? lastMonth.enquiries : thisMonth.enquiries },
         enquiryValue: {
           total: r2(allEnquiries.reduce((sum, e) => sum + Number(e.estimatedValue), 0)),
-          thisMonth: r2(allEnquiries.filter((e) => monthKey(e.createdAt) === nowKey).reduce((sum, e) => sum + Number(e.estimatedValue), 0)),
+          thisMonth: range
+            ? r2(matchedEnquiries.filter((e) => inPrevious(e.createdAt)).reduce((t, e) => t + Number(e.estimatedValue), 0))
+            : r2(allEnquiries.filter((e) => monthKey(e.createdAt) === nowKey).reduce((t, e) => t + Number(e.estimatedValue), 0)),
         },
         won: { count: wonCount, value: r2(allEnquiries.filter((e) => e.stage === 'WON').reduce((sum, e) => sum + Number(e.estimatedValue), 0)) },
         lost: {
           count: allEnquiries.filter((e) => e.stage === 'LOST').length,
           value: r2(allEnquiries.filter((e) => e.stage === 'LOST').reduce((sum, e) => sum + Number(e.estimatedValue), 0)),
         },
-        orders: { count: orders.length, value: r2(totalOrdersNet), thisMonth: thisMonth.orders },
+        orders: { count: bookedOrders.length, value: r2(totalOrdersNet), thisMonth: range ? lastMonth.orders : thisMonth.orders },
+        recentLabel: range ? 'previous period' : 'this month',
       },
-      monthLabel: `${months[9].label} ${nowYear}`,
+      monthLabel: range ? 'this period' : `${months[monthCount - 1].label} ${nowYear}`,
       lastKey,
       funnel,
       orderStatus,
@@ -544,7 +580,7 @@ export async function GET(request: Request) {
               const leads = allEnquiries.filter((e) => e.assignedTo.id === sp.id);
               const open = leads.filter((e) => e.stage !== 'WON' && e.stage !== 'LOST');
               const won = leads.filter((e) => e.stage === 'WON').length;
-              const own = orders.filter((o) => o.assignedSalespersonId === sp.id);
+              const own = bookedOrders.filter((o) => o.assignedSalespersonId === sp.id);
               let received = 0;
               let outstanding = 0;
               for (const o of own) {
@@ -646,7 +682,7 @@ export async function GET(request: Request) {
           month: monthKey(e.createdAt),
           lostDate: e.stage === 'LOST' ? e.stageHistory.find((h) => h.toStage === 'LOST')?.createdAt ?? null : null,
         })),
-        orders: [...orders, ...cancelledOrders].map((o) => {
+        orders: [...bookedOrders, ...cancelledOrders].map((o) => {
           const rec = orderBreakdown.find((b) => b.id === o.id);
           return {
             id: o.id,
@@ -696,7 +732,7 @@ export async function GET(request: Request) {
         ...orderCandidates.map((record) => filterRecord({ ...record, recordType: 'Order' })),
       ]),
       filterTotal: taskCandidates.length + enquiryCandidates.length + quoteCandidates.length + orderCandidates.length,
-      filterCount: filteredTasks.length + allEnquiries.length + pendingQuotes.length + orders.length,
+      filterCount: filteredTasks.length + allEnquiries.length + pendingQuotes.length + bookedOrders.length,
     });
   } catch (error: any) {
     if (error.message === 'UNAUTHORIZED') {

@@ -8,7 +8,7 @@ export default function ForgotPasswordPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   return <main className="flex min-h-screen flex-col items-center justify-center bg-navy-950 px-4 py-12">
-    <img src="/company-logo-dark.svg" alt="Nirmaan Watertech Solutions" width="1000" height="525" className="mb-5 h-auto w-64 max-w-[75vw]" />
+    <img src="/logo.png" alt="Nirmaan Watertech Solutions" width="1200" height="586" className="mb-5 h-auto w-64 max-w-[75vw] rounded-2xl bg-white px-4 py-3 shadow-lg" />
     <h1 className="mb-8 text-2xl font-black text-white">Sales Tracker</h1>
     <section className="w-full max-w-md space-y-5 rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl sm:p-8">
       <div><h2 className="text-xl font-bold text-slate-900">Forgot password?</h2><p className="mt-2 text-sm text-slate-600">Enter your work email to request help from a company director. Your director will verify your identity before setting a new password.</p></div>

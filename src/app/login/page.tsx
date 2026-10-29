@@ -41,9 +41,9 @@ export default function LoginPage() {
     <div className="min-h-screen bg-navy-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
         <div className="mx-auto mb-5 w-64 max-w-[75vw]">
-          {/* Supplied brand reference recreated as a scalable vector. */}
+          {/* The company logo, on white so its blues read on the dark page */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/company-logo-dark.svg" alt="Nirmaan Watertech Solutions" width="1000" height="525" className="h-auto w-full" />
+          <img src="/logo.png" alt="Nirmaan Watertech Solutions" width="1200" height="586" className="h-auto w-full rounded-2xl bg-white px-4 py-3 shadow-lg" />
         </div>
         <h2 className="text-2xl font-black text-white tracking-wide">Sales Tracker</h2>
       </div>
