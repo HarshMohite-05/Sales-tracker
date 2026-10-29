@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { AlertTriangle, ChevronDown, IndianRupee, Plus, ShoppingBag, Trash2, Wallet } from 'lucide-react';
 import { formatDate, formatINR, formatINRCompact, getIndianFYQuarter, humanize } from '@/lib/utils';
+import { cleanAmountInput, formatAmountInput } from '@/lib/quotation';
 import { currentPeriodKey, PERIOD_TYPE_LABELS, periodOptions, type TargetPeriodType } from '@/lib/targetPeriods';
 import { REQUIREMENT_TYPES } from '@/lib/requirementTypes';
 
@@ -371,17 +372,18 @@ export default function TargetsPage() {
                                 </button>
                               )}
                             </span>
+                            {/* Typed with Indian commas, e.g. 10,00,00,000, and shown short underneath */}
                             <input
-                              type="number"
-                              min={i ? Number(levelValues[i - 1]) + 1 || 1 : nextAfter ? Number(nextAfter.targetValue) + 1 : 1}
-                              step="1"
+                              type="text"
+                              inputMode="numeric"
                               aria-label={`Target ${firstLevel + i} value`}
-                              value={v}
-                              onChange={(e) => setLevelValues((l) => l.map((x, j) => (j === i ? e.target.value : x)))}
+                              value={formatAmountInput(v)}
+                              onChange={(e) => setLevelValues((l) => l.map((x, j) => (j === i ? cleanAmountInput(e.target.value).split('.')[0] : x)))}
                               className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs font-bold text-slate-900"
-                              placeholder={i ? 'higher' : 'e.g. 1000000'}
+                              placeholder={i ? 'higher' : 'e.g. 10,00,000'}
                               required
                             />
+                            <span className="mt-0.5 block h-4 text-[10px] font-semibold normal-case tracking-normal text-sky-700">{Number(v) > 0 ? formatINRCompact(Number(v)) : ''}</span>
                           </th>
                         ))}
                         <th className="pb-1.5 pr-2 align-bottom">
@@ -1336,11 +1338,10 @@ function SplitForm({ order, act, onClose }: { order: any; act: (b: any) => Promi
           <label key={t.businessType} className="flex items-center justify-between gap-3">
             <span className="font-semibold text-slate-700">{t.label}</span>
             <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amounts[t.businessType]}
-              onChange={(e) => setAmounts((a) => ({ ...a, [t.businessType]: e.target.value }))}
+              type="text"
+              inputMode="decimal"
+              value={formatAmountInput(amounts[t.businessType] || '')}
+              onChange={(e) => setAmounts((a) => ({ ...a, [t.businessType]: cleanAmountInput(e.target.value) }))}
               className="w-40 rounded border border-slate-300 px-2 py-1.5 text-right font-semibold"
               placeholder="₹"
             />
