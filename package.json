@@ -12,7 +12,8 @@
     "seed": "tsx prisma/seed.ts",
     "check:links": "tsx scripts/check-links.ts",
     "recalc:gst": "tsx scripts/recalc-gst-at-invoice.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "vercel-build": "prisma generate && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" prisma db push --skip-generate && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" tsx scripts/bootstrap-production.ts && next build"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
