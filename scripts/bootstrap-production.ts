@@ -30,15 +30,6 @@ async function main() {
     officeIds[code] = saved.id;
   }
 
-  // One-off password reset: RESET_PASSWORDS is base64 JSON { emails: string[] | "all", passwordHash }.
-  // Set it only for the deploy that should apply it, then remove it.
-  if (process.env.RESET_PASSWORDS) {
-    const reset = JSON.parse(Buffer.from(process.env.RESET_PASSWORDS, 'base64').toString('utf8')) as { emails: string[] | 'all'; passwordHash: string };
-    const where = reset.emails === 'all' ? {} : { email: { in: reset.emails.map((e) => e.toLowerCase()) } };
-    const { count } = await prisma.user.updateMany({ where, data: { passwordHash: reset.passwordHash } });
-    console.log(`Bootstrap: reset the password of ${count} users.`);
-  }
-
   const existing = await prisma.user.count();
   if (existing > 0 || !data.users?.length) {
     console.log(`Bootstrap: offices ready; ${existing} users already, nothing else to do.`);
