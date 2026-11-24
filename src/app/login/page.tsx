@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, AlertCircle } from 'lucide-react';
+import PasswordInput from '@/components/ui/PasswordInput';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -83,8 +84,8 @@ export default function LoginPage() {
               <label htmlFor="login-page-field-2" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                 Password
               </label>
-              <input id="login-page-field-2"
-                type="password"
+              <PasswordInput id="login-page-field-2"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"

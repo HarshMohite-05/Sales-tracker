@@ -22,6 +22,7 @@ import {
   Database,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import PasswordInput from '@/components/ui/PasswordInput';
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'users' | 'offices' | 'import' | 'audit' | 'payments'>('users');
@@ -39,6 +40,7 @@ export default function SettingsPage() {
   const [newUserMobile, setNewUserMobile] = useState('');
   const [newUserDesignation, setNewUserDesignation] = useState('Sales Engineer');
   const [newUserOfficeId, setNewUserOfficeId] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'SALESPERSON' | 'DIRECTOR'>('SALESPERSON');
   const [userError, setUserError] = useState<string | null>(null);
 
   // Excel Import Wizard States
@@ -84,6 +86,7 @@ export default function SettingsPage() {
           mobile: newUserMobile,
           designation: newUserDesignation,
           officeId: newUserOfficeId || null,
+          role: newUserRole,
         }),
       });
 
@@ -94,6 +97,7 @@ export default function SettingsPage() {
       setNewUserName('');
       setNewUserEmail('');
       setNewUserOfficeId('');
+      setNewUserRole('SALESPERSON');
       loadUsers();
     } catch (err: any) {
       setUserError(err.message);
@@ -217,7 +221,7 @@ export default function SettingsPage() {
                 className="bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-3.5 py-1.5 rounded-xl shadow-xs transition flex items-center space-x-1"
               >
                 <UserPlus className="h-3.5 w-3.5" />
-                <span>Add Salesperson</span>
+                <span>Add Team Member</span>
               </button>
             </div>
 
@@ -455,7 +459,7 @@ export default function SettingsPage() {
       {showAddUser && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-5 border border-slate-200">
-            <h3 className="font-bold text-sm text-slate-900 mb-3">Add Salesperson</h3>
+            <h3 className="font-bold text-sm text-slate-900 mb-3">Add Team Member</h3>
             {userError && <p className="text-xs text-rose-600 mb-2">{userError}</p>}
             <form onSubmit={handleCreateUser} className="space-y-3 text-xs">
               <div>
@@ -478,6 +482,14 @@ export default function SettingsPage() {
                   className="w-full border border-slate-300 rounded px-2.5 py-1.5"
                   required
                 />
+              </div>
+
+              <div>
+                <label htmlFor="settings-page-field-role" className="block font-semibold text-slate-700 mb-1">Role *</label>
+                <select id="settings-page-field-role" value={newUserRole} onChange={(e) => setNewUserRole(e.target.value as 'SALESPERSON' | 'DIRECTOR')} className="w-full border border-slate-300 rounded px-2.5 py-1.5">
+                  <option value="SALESPERSON">Salesperson</option>
+                  <option value="DIRECTOR">Director (full admin access)</option>
+                </select>
               </div>
 
               <div>
@@ -514,8 +526,8 @@ export default function SettingsPage() {
 
               <div>
                 <label htmlFor="settings-page-field-7" className="block font-semibold text-slate-700 mb-1">Password</label>
-                <input id="settings-page-field-7"
-                  type="password"
+                <PasswordInput id="settings-page-field-7"
+                  autoComplete="new-password"
                   value={newUserPassword}
                   onChange={(e) => setNewUserPassword(e.target.value)}
                   className="w-full border border-slate-300 rounded px-2.5 py-1.5"

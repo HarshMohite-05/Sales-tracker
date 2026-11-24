@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import PasswordInput from '@/components/ui/PasswordInput';
 
 export default function EmployeeAccountActions({ employee, users, onChanged }: { employee: any; users: any[]; onChanged: () => void }) {
   const [mode, setMode] = useState<'reset' | 'remove' | null>(null);
@@ -30,8 +31,8 @@ export default function EmployeeAccountActions({ employee, users, onChanged }: {
       <h3 className="font-bold text-slate-900">{mode==='reset'?'Reset password':'Remove employee'} · {employee.name}</h3>
       {mode==='reset'?<>
         <p className="text-slate-500">Existing passwords cannot be viewed. Set a new password and share it with the employee. Their existing sessions will end.</p>
-        <label className="block text-slate-700">New password<input type="password" autoComplete="new-password" minLength={8} required value={password} onChange={e=>setPassword(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
-        <label className="block text-slate-700">Confirm new password<input type="password" autoComplete="new-password" minLength={8} required value={confirm} onChange={e=>setConfirm(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
+        <label className="block text-slate-700">New password<PasswordInput autoComplete="new-password" minLength={8} required value={password} onChange={e=>setPassword(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
+        <label className="block text-slate-700">Confirm new password<PasswordInput autoComplete="new-password" minLength={8} required value={confirm} onChange={e=>setConfirm(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
       </>:<>
         <p className="text-slate-600">This removes their login, name, email, phone and designation from the account. Company records and historical activity remain linked to a former-employee identity. This cannot be undone.</p>
         <label className="block text-slate-700">Reassign clients and unfinished work<select value={assignee} onChange={e=>setAssignee(e.target.value)} className="mt-1 block w-full rounded border bg-white p-2"><option value="">No reassignment (only if no assigned work)</option>{users.filter(u=>u.id!==employee.id&&u.isActive&&u.role==='SALESPERSON').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
