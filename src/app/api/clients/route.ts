@@ -4,7 +4,7 @@ import { errorResponse as apiErrorResponse } from '@/lib/apiErrors';
 import { NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { assertClientAccess } from '@/lib/rbac';
+import { assertClientAccess, canOwnSalesWork } from '@/lib/rbac';
 import { errorResponse } from '@/lib/apiErrors';
 import { parseRequirementTypes } from '@/lib/requirementTypes';
 import { Role, EnquiryCategory, EnquiryStage, ActivityType, DiscussionType, TaskType, TaskPriority, TaskStatus } from '@prisma/client';
@@ -214,8 +214,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Enter valid dates and a due date for the follow-up' }, { status: 400 });
     }
     const assignee = await prisma.user.findUnique({ where: { id: targetSalespersonId } });
-    if (!assignee?.isActive || assignee.role !== Role.SALESPERSON) {
-      return NextResponse.json({ error: 'Choose an active salesperson for this client and follow-up' }, { status: 400 });
+    if (!canOwnSalesWork(assignee)) {
+      return NextResponse.json({ error: 'Choose an active salesperson or director for this client and follow-up' }, { status: 400 });
     }
 
     // Transactional creation

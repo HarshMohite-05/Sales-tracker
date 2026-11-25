@@ -150,6 +150,9 @@ export default function ClientProfilePage({
   // Notes: only directors add them; a requirement card can open Notes at its own notes
   const [isDirector, setIsDirector] = useState(false);
   const [showDeleteClient, setShowDeleteClient] = useState(false);
+  const [myId, setMyId] = useState<string | null>(null);
+  // Directors complete only the follow-ups they handle themselves
+  const canComplete = (task: any) => !isDirector || task?.assignedSalespersonId === myId;
   const [notesFocus, setNotesFocus] = useState<string | null>(null);
 
   async function loadClientData() {
@@ -182,7 +185,10 @@ export default function ClientProfilePage({
   useEffect(() => {
     fetch('/api/auth/me')
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setIsDirector(data?.user?.role === 'DIRECTOR'))
+      .then((data) => {
+        setIsDirector(data?.user?.role === 'DIRECTOR');
+        setMyId(data?.user?.id ?? null);
+      })
       .catch(() => {});
   }, []);
 
@@ -576,7 +582,7 @@ export default function ClientProfilePage({
                     <p className="font-semibold text-slate-800">{pendingTasks[0].description}</p>
                     <p className={overdueTasks.length ? 'font-semibold text-rose-700' : 'text-slate-500'}>{formatDateTime(pendingTasks[0].dueDateTime)}{overdueTasks.length ? ' · Overdue' : ''}</p>
                     <div className="flex flex-wrap gap-2">
-                      {!isDirector && (<button type="button" onClick={() => setTaskAction({ task: pendingTasks[0], action: 'complete' })} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700">Mark done</button>)}
+                      {canComplete(pendingTasks[0]) && (<button type="button" onClick={() => setTaskAction({ task: pendingTasks[0], action: 'complete' })} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700">Mark done</button>)}
                       <button type="button" onClick={() => setTaskAction({ task: pendingTasks[0], action: 'reschedule' })} className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50">Reschedule</button>
                     </div>
                   </div>
@@ -699,7 +705,7 @@ export default function ClientProfilePage({
                   </span>
                   {t.status === 'PENDING' && (
                     <div className="flex flex-wrap gap-2">
-                      {!isDirector && (<button type="button" onClick={() => setTaskAction({ task: t, action: 'complete' })} className="font-semibold text-emerald-700 hover:underline">Mark done</button>)}
+                      {canComplete(t) && (<button type="button" onClick={() => setTaskAction({ task: t, action: 'complete' })} className="font-semibold text-emerald-700 hover:underline">Mark done</button>)}
                       <button type="button" onClick={() => setTaskAction({ task: t, action: 'reschedule' })} className="font-semibold text-sky-700 hover:underline">Reschedule</button>
                     </div>
                   )}

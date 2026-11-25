@@ -4,7 +4,7 @@ import { errorResponse as apiErrorResponse } from '@/lib/apiErrors';
 import { NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { assertClientRelations } from '@/lib/rbac';
+import { assertClientRelations, canOwnSalesWork } from '@/lib/rbac';
 import { errorResponse } from '@/lib/apiErrors';
 import { Role, ActivityType, DiscussionType, TaskType, TaskPriority, TaskStatus, EnquiryStage } from '@prisma/client';
 import { nextDocNumber, toTaskType } from '@/lib/numbering';
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
     }
     if (nextAction) {
       const assignee = await prisma.user.findUnique({ where: { id: salesperson } });
-      if (!assignee?.isActive || assignee.role !== Role.SALESPERSON) return NextResponse.json({ error: 'Choose an active salesperson for the follow-up' }, { status: 400 });
+      if (!canOwnSalesWork(assignee)) return NextResponse.json({ error: 'Choose an active salesperson or director for the follow-up' }, { status: 400 });
     }
     if (stageUpdate) {
       if (!Object.values(EnquiryStage).includes(stageUpdate) || ['LOST', 'ON_HOLD'].includes(stageUpdate)) {

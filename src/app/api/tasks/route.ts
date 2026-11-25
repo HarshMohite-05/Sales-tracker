@@ -7,7 +7,7 @@ import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { Role, TaskStatus, TaskType, TaskPriority } from '@prisma/client';
 import { nextDocNumber, toTaskType } from '@/lib/numbering';
-import { assertClientAccess, assertEnquiryAccess } from '@/lib/rbac';
+import { assertClientAccess, assertEnquiryAccess, canOwnSalesWork } from '@/lib/rbac';
 
 export async function GET(request: Request) {
   try {
@@ -127,23 +127,12 @@ export async function POST(request: Request) {
       await assertClientAccess(user, clientId);
     }
 
-    // Follow-up ownership rule: Customer follow-ups are performed by salespeople only
-    let assignedId = user.id;
-    if (user.role === Role.DIRECTOR) {
-      if (!assignedSalespersonId) {
-        return NextResponse.json(
-          { error: 'Director must assign customer follow-up to a salesperson' },
-          { status: 400 }
-        );
-      }
-      assignedId = assignedSalespersonId;
-    }
-
-    // Verify assigned user is indeed a salesperson
+    // A salesperson's follow-ups are their own; a director gives one to a salesperson or keeps it
+    const assignedId = user.role === Role.DIRECTOR ? assignedSalespersonId || user.id : user.id;
     const targetUser = await prisma.user.findUnique({ where: { id: assignedId } });
-    if (!targetUser || !targetUser.isActive || targetUser.role !== Role.SALESPERSON) {
+    if (!canOwnSalesWork(targetUser)) {
       return NextResponse.json(
-        { error: 'Client-facing follow-ups must be assigned to a salesperson' },
+        { error: 'Assign the follow-up to an active salesperson or director' },
         { status: 400 }
       );
     }

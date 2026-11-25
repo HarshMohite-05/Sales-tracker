@@ -132,3 +132,11 @@ export async function assertOrderAccess(user: UserSession, orderId: string): Pro
   }
   return true;
 }
+
+/**
+ * Who can own clients, requirements, follow-ups and orders: any active salesperson, and directors, who may
+ * handle some clients themselves. (Targets and incentives stay with salespeople.)
+ */
+export function canOwnSalesWork(person: { isActive: boolean; role: Role } | null | undefined): boolean {
+  return !!person?.isActive && (person.role === Role.SALESPERSON || person.role === Role.DIRECTOR);
+}

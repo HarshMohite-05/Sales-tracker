@@ -48,3 +48,6 @@ qa/evidence/
 run-results.txt
 wipe-results.txt
 uploads/
+
+# local test database (PGlite)
+.local-db/

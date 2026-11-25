@@ -1,3 +1,4 @@
+import { canOwnSalesWork } from '@/lib/rbac';
 import { PASSWORD_RECOVERY_PREFIX, passwordRecoveryKey } from '@/lib/passwordRecovery';
 import { readJson } from '@/lib/inputValidation';
 import { errorResponse as apiErrorResponse } from '@/lib/apiErrors';
@@ -143,8 +144,8 @@ export async function PATCH(request: Request) {
 
     if (reassignToSalespersonId) {
       const assignee = await prisma.user.findUnique({ where: { id: reassignToSalespersonId } });
-      if (!assignee?.isActive || assignee.role !== Role.SALESPERSON || assignee.id === userId) {
-        return NextResponse.json({ error: 'Choose a different active salesperson for reassignment' }, { status: 400 });
+      if (!canOwnSalesWork(assignee) || assignee!.id === userId) {
+        return NextResponse.json({ error: 'Choose a different active salesperson or director for reassignment' }, { status: 400 });
       }
     }
     const result = await prisma.$transaction(async (tx) => {
@@ -220,7 +221,7 @@ export async function DELETE(request: Request) {
       if (assigned.some(n => n > 0) && !reassignToSalespersonId) throw new Error('REASSIGN_REQUIRED');
       if (reassignToSalespersonId) {
         const next = await tx.user.findUnique({ where: { id: reassignToSalespersonId } });
-        if (!next?.isActive || next.role !== Role.SALESPERSON || next.id === userId) throw new Error('INVALID_ASSIGNEE');
+        if (!next || !canOwnSalesWork(next) || next.id === userId) throw new Error('INVALID_ASSIGNEE');
         await tx.client.updateMany({ where: { assignedToId: userId }, data: { assignedToId: next.id } });
         await tx.enquiry.updateMany({ where: { assignedToId: userId, stage: { notIn: ['WON', 'LOST'] } }, data: { assignedToId: next.id } });
         await tx.task.updateMany({ where: { assignedSalespersonId: userId, status: 'PENDING' }, data: { assignedSalespersonId: next.id } });

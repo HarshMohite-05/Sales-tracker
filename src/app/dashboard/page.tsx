@@ -167,7 +167,9 @@ export default function DashboardPage() {
 
   const isDirector = stats?.role === 'DIRECTOR';
   // A director looking at one salesperson's dashboard, or at the whole team
-  const viewing: { id: string; name: string } | null = stats?.viewing ?? null;
+  const viewing: { id: string; name: string; isMe?: boolean } | null = stats?.viewing ?? null;
+  // A director looking at their own clients reads it as "you", like a salesperson's dashboard
+  const viewingOther = viewing && !viewing.isMe ? viewing : null;
   const teamView = isDirector && !viewing;
   const summary = stats?.summary || {};
   const visual = stats?.visual;
@@ -264,8 +266,10 @@ export default function DashboardPage() {
               </span>
               <div className="min-w-0 flex-1">
                 <h2 className="text-xl font-bold text-white">
-                  {viewing ? (
-                    <>{viewing.name}&apos;s dashboard</>
+                  {viewingOther ? (
+                    <>{viewingOther.name}&apos;s dashboard</>
+                  ) : viewing?.isMe ? (
+                    <>My sales</>
                   ) : (
                     <>
                       {greeting()}
@@ -278,7 +282,7 @@ export default function DashboardPage() {
                     'Loading your overview…'
                   ) : (
                     <>
-                      {viewing ? `${viewing.name.split(' ')[0]} has ` : teamView ? 'Your team has ' : 'You have '}
+                      {viewingOther ? `${viewingOther.name.split(' ')[0]} has ` : teamView ? 'Your team has ' : 'You have '}
                       <strong className="text-white">
                         {summary.dueTodayCount || 0} follow-up
                         {summary.dueTodayCount === 1 ? '' : 's'}
@@ -294,8 +298,8 @@ export default function DashboardPage() {
                       {targetPct !== null ? (
                         <>
                           {' '}
-                          {viewing ? 'At' : teamView ? 'The team is at' : 'Overall, you are at'}{' '}
-                          <strong className="text-white">{Math.round(targetPct)}%</strong> of {viewing ? 'the' : teamView ? 'its' : 'your'} order target.
+                          {viewingOther ? 'At' : teamView ? 'The team is at' : 'Overall, you are at'}{' '}
+                          <strong className="text-white">{Math.round(targetPct)}%</strong> of {viewingOther ? 'the' : teamView ? 'its' : 'your'} order target.
                         </>
                       ) : (
                         <> {formatINRCompact(summary.totalPipelineValue)} is open in the pipeline.</>
@@ -1682,7 +1686,10 @@ const initials = (name: string) =>
  * Director's choice of dashboard: the whole team, or one salesperson's (exactly what they see), picked
  * from a searchable list so the header stays one line however big the team is.
  */
-function PersonSwitcher({ people, value, onChange }: { people: { id: string; name: string }[]; value: string; onChange: (id: string) => void }) {
+function PersonSwitcher({ people: everyone, value, onChange }: { people: { id: string; name: string; isMe?: boolean }[]; value: string; onChange: (id: string) => void }) {
+  // The director's own clients get their own "My sales" button; the list holds the salespeople
+  const me = everyone.find((p) => p.isMe);
+  const people = everyone.filter((p) => !p.isMe);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const box = useRef<HTMLDivElement>(null);
@@ -1720,6 +1727,11 @@ function PersonSwitcher({ people, value, onChange }: { people: { id: string; nam
         <Users className="mr-1 inline h-3.5 w-3.5" />
         Team
       </button>
+      {me && (
+        <button type="button" onClick={() => pick(me.id)} aria-pressed={value === me.id} className={chip(value === me.id)}>
+          My sales
+        </button>
+      )}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -1815,6 +1827,7 @@ function Attention({
 type TeamRow = {
   id: string;
   name: string;
+  isMe?: boolean;
   target: { value: number; achieved: number; label: string } | null;
   leads: number;
   openLeads: number;
@@ -1900,7 +1913,10 @@ function TeamPerformance({ team, onOpen }: { team: TeamRow[]; onOpen: (id: strin
                       {initials(r.name)}
                     </span>
                     <span>
-                      <strong className="block text-sm text-[var(--text-primary)]">{r.name}</strong>
+                      <strong className="block text-sm text-[var(--text-primary)]">
+                        {r.name}
+                        {r.isMe && <span className="ml-1.5 text-[10px] font-semibold text-[#9ec5f4]">(you)</span>}
+                      </strong>
                       <span className="text-[10px] text-[var(--text-muted)]">
                         {plural(r.leads, 'lead')}
                         {r.pendingApprovals > 0 && <span className="ml-1.5 text-[#ffcf7a]">· {r.pendingApprovals} awaiting approval</span>}

@@ -3,7 +3,7 @@ import { errorResponse as apiErrorResponse } from '@/lib/apiErrors';
 import { NextResponse } from 'next/server';
 import { requireAuth, requireDirector } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { assertClientAccess } from '@/lib/rbac';
+import { assertClientAccess, canOwnSalesWork } from '@/lib/rbac';
 import { Role } from '@prisma/client';
 import { checkClientCode } from '@/lib/clientCodeServer';
 import { normalizeClientCode as normalizeCode } from '@/lib/clientCode';
@@ -239,8 +239,8 @@ export async function PATCH(
 
     if (assignedToId) {
       const assignee = await prisma.user.findUnique({ where: { id: assignedToId } });
-      if (!assignee?.isActive || assignee.role !== Role.SALESPERSON) {
-        return NextResponse.json({ error: 'Choose an active salesperson' }, { status: 400 });
+      if (!canOwnSalesWork(assignee)) {
+        return NextResponse.json({ error: 'Choose an active salesperson or director' }, { status: 400 });
       }
     }
 

@@ -52,7 +52,8 @@ function ActivitiesContent() {
     setActiveTab(requestedView === 'missing_action' ? 'missing' : 'tasks');
   }, [requestedView]);
   const [userRole, setUserRole] = useState<string | null>(null);
-  useEffect(() => { fetch('/api/auth/me').then(r => r.json()).then(data => setUserRole(data.user?.role || null)).catch(() => {}); }, []);
+  const [userId, setUserId] = useState<string | null>(null);
+  useEffect(() => { fetch('/api/auth/me').then(r => r.json()).then(data => { setUserRole(data.user?.role || null); setUserId(data.user?.id || null); }).catch(() => {}); }, []);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -215,7 +216,7 @@ function ActivitiesContent() {
                               <CalendarClock className="h-3.5 w-3.5" />
                               <span>Reschedule</span>
                             </button>
-                            {userRole === 'SALESPERSON' && (                            <button
+                            {(userRole === 'SALESPERSON' || (task.assignedSalesperson?.id ?? task.assignedSalespersonId) === userId) && (                            <button
                               onClick={() => setSelectedTaskForComplete(task)}
                               className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-xs"
                             >

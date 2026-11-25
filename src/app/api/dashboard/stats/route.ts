@@ -563,19 +563,23 @@ export async function GET(request: Request) {
       outstandingClients: new Set(collections.map((c) => c.clientId)).size,
     };
 
-    // Directors pick whose dashboard to see: the team, or one salesperson
+    // Directors pick whose dashboard to see: the team, one salesperson, or their own clients ("My sales", listed first)
     const salespeople = isDirector
-      ? await prisma.user.findMany({
-          where: { role: Role.SALESPERSON, isActive: true, ...(officeFilter ? { officeId: officeFilter } : {}) },
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        })
+      ? (
+          await prisma.user.findMany({
+            where: { isActive: true, OR: [{ role: Role.SALESPERSON }, { id: user.id }], ...(officeFilter ? { officeId: officeFilter } : {}) },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+          })
+        )
+          .map((p) => ({ ...p, isMe: p.id === user.id }))
+          .sort((a, b) => Number(b.isMe) - Number(a.isMe))
       : [];
     const offices = isDirector ? await listOffices() : [];
     // The team view: one row per salesperson, from the same filtered records as the cards above it
     const team =
       isDirector && !targetSpId
-        ? await Promise.all(
+        ? (await Promise.all(
             salespeople.map(async (sp) => {
               const leads = allEnquiries.filter((e) => e.assignedTo.id === sp.id);
               const open = leads.filter((e) => e.stage !== 'WON' && e.stage !== 'LOST');
@@ -607,9 +611,12 @@ export async function GET(request: Request) {
                 overdueFollowUps: allOverdueTasks.filter((task) => task.assignedSalesperson.id === sp.id).length,
                 todayFollowUps: filteredTasks.filter((task) => task.assignedSalesperson.id === sp.id && task.dueDateTime >= startOfToday && task.dueDateTime <= endOfToday).length,
                 pendingApprovals: pendingQuotes.filter((q) => q.salespersonId === sp.id).length,
+                isMe: sp.isMe,
               };
             })
-          )
+          ))
+            // The director's own row only once they handle clients themselves
+            .filter((row) => !row.isMe || row.leads > 0 || row.orders > 0 || row.overdueFollowUps > 0 || row.todayFollowUps > 0)
         : null;
     const viewing = isDirector && targetSpId ? salespeople.find((sp) => sp.id === targetSpId) ?? null : null;
 

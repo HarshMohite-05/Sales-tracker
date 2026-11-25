@@ -16,9 +16,13 @@ export async function PATCH(
 ) {
   try {
     const user = await requireAuth();
-    if (user.role !== 'SALESPERSON') return NextResponse.json({ error: 'Customer follow-ups are performed by salespeople' }, { status: 403 });
     const { id } = await params;
     await assertTaskAccess(user, id);
+    // Whoever the follow-up is assigned to completes it, a director only for their own
+    const owner = await prisma.task.findUnique({ where: { id }, select: { assignedSalespersonId: true } });
+    if (user.role !== 'SALESPERSON' && owner?.assignedSalespersonId !== user.id) {
+      return NextResponse.json({ error: 'Only the person this follow-up is assigned to can complete it' }, { status: 403 });
+    }
 
     const body = await readJson(request);
     const {

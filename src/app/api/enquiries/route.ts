@@ -5,7 +5,7 @@ import { errorResponse as apiErrorResponse } from '@/lib/apiErrors';
 import { NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { assertClientRelations } from '@/lib/rbac';
+import { assertClientRelations, canOwnSalesWork } from '@/lib/rbac';
 import { errorResponse } from '@/lib/apiErrors';
 import { parseRequirementTypes } from '@/lib/requirementTypes';
 import { Role, EnquiryCategory, EnquiryStage, ActivityType, TaskType, TaskPriority, TaskStatus } from '@prisma/client';
@@ -147,8 +147,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Enter a valid date' }, { status: 400 });
     }
     const assignee = await prisma.user.findUnique({ where: { id: assignedTo } });
-    if (!assignee?.isActive || assignee.role !== Role.SALESPERSON) {
-      return NextResponse.json({ error: 'Choose an active salesperson' }, { status: 400 });
+    if (!canOwnSalesWork(assignee)) {
+      return NextResponse.json({ error: 'Choose an active salesperson or director' }, { status: 400 });
     }
 
     const enquiry = await prisma.$transaction(async (tx) => {

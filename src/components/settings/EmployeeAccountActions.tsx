@@ -35,7 +35,7 @@ export default function EmployeeAccountActions({ employee, users, onChanged }: {
         <label className="block text-slate-700">Confirm new password<PasswordInput autoComplete="new-password" minLength={8} required value={confirm} onChange={e=>setConfirm(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
       </>:<>
         <p className="text-slate-600">This removes their login, name, email, phone and designation from the account. Company records and historical activity remain linked to a former-employee identity. This cannot be undone.</p>
-        <label className="block text-slate-700">Reassign clients and unfinished work<select value={assignee} onChange={e=>setAssignee(e.target.value)} className="mt-1 block w-full rounded border bg-white p-2"><option value="">No reassignment (only if no assigned work)</option>{users.filter(u=>u.id!==employee.id&&u.isActive&&u.role==='SALESPERSON').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
+        <label className="block text-slate-700">Reassign clients and unfinished work<select value={assignee} onChange={e=>setAssignee(e.target.value)} className="mt-1 block w-full rounded border bg-white p-2"><option value="">No reassignment (only if no assigned work)</option>{users.filter(u=>u.id!==employee.id&&u.isActive&&(u.role==='SALESPERSON'||u.role==='DIRECTOR')).map(u=><option key={u.id} value={u.id}>{u.role==='DIRECTOR'?`${u.name} (Director)`:u.name}</option>)}</select></label>
         <label className="flex items-start gap-2 text-slate-700"><input type="checkbox" required />I confirm this employee has left and their account should be removed.</label>
       </>}
       {error&&<p role="alert" className="text-rose-700">{error}</p>}

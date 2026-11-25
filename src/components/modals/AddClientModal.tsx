@@ -155,15 +155,18 @@ export default function AddClientModal({
       fetch('/api/settings/users')
         .then((res) => res.json())
         .then((data) => {
-          const sps = (data.users || []).filter((u: any) => u.role === 'SALESPERSON' && u.isActive);
-          setSalespeople(sps);
-          if (sps.length > 0 && !assignedSalespersonId) {
-            setAssignedSalespersonId(sps[0].id);
+          // The director themselves first ("Me"), then salespeople, then other directors
+          const active = (data.users || []).filter((u: any) => u.isActive && (u.role === 'SALESPERSON' || u.role === 'DIRECTOR'));
+          const rank = (u: any) => (u.id === currentUserId ? 0 : u.role === 'SALESPERSON' ? 1 : 2);
+          const owners = active.sort((a: any, b: any) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+          setSalespeople(owners);
+          if (owners.length > 0 && !owners.some((o: any) => o.id === assignedSalespersonId)) {
+            setAssignedSalespersonId(owners[0].id);
           }
         })
         .catch(() => {});
     }
-  }, [currentUserRole, assignedSalespersonId]);
+  }, [currentUserRole, currentUserId, assignedSalespersonId]);
 
   // Duplicate Search as user types client name
   useEffect(() => {
@@ -357,7 +360,7 @@ export default function AddClientModal({
             {currentUserRole === 'DIRECTOR' && (
             <div>
               <label htmlFor="modals-AddClientModal-field-2" className="block text-xs font-semibold text-slate-700 mb-1">
-                Salesperson
+                Handled by
               </label>
                 <select id="modals-AddClientModal-field-2"
                   value={assignedSalespersonId}
@@ -366,7 +369,7 @@ export default function AddClientModal({
                 >
                   {salespeople.map((sp) => (
                     <option key={sp.id} value={sp.id}>
-                      {sp.name}
+                      {sp.id === currentUserId ? `Me (${sp.name})` : sp.role === 'DIRECTOR' ? `${sp.name} (Director)` : sp.name}
                     </option>
                   ))}
                 </select>
