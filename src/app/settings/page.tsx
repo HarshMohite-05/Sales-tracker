@@ -9,6 +9,7 @@ import EmployeeAccountActions from '@/components/settings/EmployeeAccountActions
 import PaymentRulesSettings from '@/components/settings/PaymentRulesSettings';
 import NotificationSettings from '@/components/settings/NotificationSettings';
 import OfficeSettings from '@/components/settings/OfficeSettings';
+import ClearDataSettings from '@/components/settings/ClearDataSettings';
 import {
   Settings,
   Users,
@@ -25,7 +26,7 @@ import { formatDate } from '@/lib/utils';
 import PasswordInput from '@/components/ui/PasswordInput';
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<'users' | 'offices' | 'import' | 'audit' | 'payments'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'offices' | 'import' | 'audit' | 'payments' | 'data'>('users');
   const [users, setUsers] = useState<any[]>([]);
   const [offices, setOffices] = useState<{ id: string; name: string }[]>([]);
   const teamFilter = useRecordFilters(users);
@@ -162,12 +163,12 @@ export default function SettingsPage() {
     <AppShell>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Settings</h1>
           </div>
 
-          <div className="flex bg-white p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+          <div className="flex flex-wrap bg-white p-1 rounded-xl border border-slate-200 text-xs font-semibold">
             <button
               onClick={() => setActiveTab('users')}
               className={`px-3 py-1.5 rounded-lg transition ${
@@ -200,11 +201,20 @@ export default function SettingsPage() {
             >
               TDS & Retention
             </button>
+            <button
+              onClick={() => setActiveTab('data')}
+              className={`px-3 py-1.5 rounded-lg transition ${
+                activeTab === 'data' ? 'bg-rose-600 text-white shadow-xs' : 'text-rose-600 hover:text-rose-700'
+              }`}
+            >
+              Test data
+            </button>
           </div>
         </div>
 
         {activeTab === 'payments' && <PaymentRulesSettings />}
         {activeTab === 'offices' && <OfficeSettings />}
+        {activeTab === 'data' && <ClearDataSettings />}
 
         {users.some(u => u.passwordResetRequestedAt) && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Password recovery requested by {users.filter(u => u.passwordResetRequestedAt).map(u => u.name).join(', ')}. Verify the employee’s identity (call them on their registered mobile), then use Reset password on their row in the Team tab.</p>}
         <NotificationSettings />

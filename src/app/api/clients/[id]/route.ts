@@ -7,6 +7,7 @@ import { assertClientAccess } from '@/lib/rbac';
 import { Role } from '@prisma/client';
 import { checkClientCode } from '@/lib/clientCodeServer';
 import { normalizeClientCode as normalizeCode } from '@/lib/clientCode';
+import { deleteClientCompletely } from '@/lib/dataReset';
 
 export async function GET(
   request: Request,
@@ -285,6 +286,31 @@ export async function PATCH(
     if (error.name === 'AuthorizationError') {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
+    return apiErrorResponse(error);
+  }
+}
+
+/**
+ * Director only: permanently deletes the client and everything under it (no recycle bin). The request body
+ * must carry the client's name as `confirmName`, so a stray click can't delete one.
+ */
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await requireDirector();
+    const { id } = await params;
+    const body = await readJson(request);
+    const client = await prisma.client.findUnique({ where: { id }, select: { name: true } });
+    if (!client) return NextResponse.json({ error: 'Client not found' }, { status: 404 });
+    const typed = typeof body?.confirmName === 'string' ? body.confirmName.trim().toLowerCase() : '';
+    if (typed !== client.name.trim().toLowerCase()) {
+      return NextResponse.json({ error: `Type the client name "${client.name}" to confirm` }, { status: 400 });
+    }
+    const result = await prisma.$transaction((tx) => deleteClientCompletely(tx, id, user.id), { timeout: 30000 });
+    return NextResponse.json({ success: true, ...result });
+  } catch (error: any) {
     return apiErrorResponse(error);
   }
 }

@@ -25,7 +25,9 @@ import {
   MessageCircle,
   ChevronRight,
   XCircle,
+  Trash2,
 } from 'lucide-react';
+import DeleteClientModal from '@/components/modals/DeleteClientModal';
 import { formatINR, formatDate, formatDateTime, humanize, stageLabel } from '@/lib/utils';
 import { normalizeClientCode } from '@/lib/clientCode';
 import { reconcileOrder } from '@/lib/deductions';
@@ -147,6 +149,7 @@ export default function ClientProfilePage({
 
   // Notes: only directors add them; a requirement card can open Notes at its own notes
   const [isDirector, setIsDirector] = useState(false);
+  const [showDeleteClient, setShowDeleteClient] = useState(false);
   const [notesFocus, setNotesFocus] = useState<string | null>(null);
 
   async function loadClientData() {
@@ -433,6 +436,15 @@ export default function ClientProfilePage({
               >
                 New Quotation
               </button>
+              {isDirector && (
+                <button
+                  onClick={() => setShowDeleteClient(true)}
+                  className="flex items-center gap-1 bg-white hover:bg-rose-50 text-rose-700 text-xs font-semibold px-3 py-1.5 rounded-xl border border-rose-200 transition"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete client
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -936,6 +948,9 @@ export default function ClientProfilePage({
       )}
       {taskAction?.action === 'reschedule' && (
         <RescheduleTaskModal isOpen task={taskAction.task} onClose={() => setTaskAction(null)} onSuccess={() => { setTaskAction(null); loadClientData(); }} />
+      )}
+      {showDeleteClient && (
+        <DeleteClientModal client={client} onClose={() => setShowDeleteClient(false)} onDeleted={() => router.push('/clients')} />
       )}
       {showLogActivity && (
         <LogActivityModal
